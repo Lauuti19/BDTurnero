@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Servidor: 127.0.0.1
--- Tiempo de generación: 12-05-2025 a las 17:35:51
+-- Tiempo de generación: 12-05-2025 a las 17:57:05
 -- Versión del servidor: 10.4.32-MariaDB
 -- Versión de PHP: 8.2.12
 
@@ -59,6 +59,13 @@ END$$
 
 CREATE DEFINER=`root`@`localhost` PROCEDURE `GetUserByEmail` (IN `p_email` VARCHAR(255))   BEGIN
     SELECT * FROM usuarios WHERE email = p_email;
+END$$
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `GetUsersByClass` (IN `classId` INT)   BEGIN
+  SELECT u.nombre
+  FROM clases_usuarios cu
+  JOIN usuarios u ON cu.id_usuario = u.id_usuario
+  WHERE cu.id_clase = classId;
 END$$
 
 CREATE DEFINER=`root`@`localhost` PROCEDURE `RegisterClient` (IN `p_email` VARCHAR(255), IN `p_password` VARCHAR(255), IN `p_nombre` VARCHAR(255), IN `p_dni` VARCHAR(20), IN `p_celular` VARCHAR(10))   BEGIN
@@ -407,7 +414,7 @@ CREATE TABLE `usuarios` (
 --
 
 INSERT INTO `usuarios` (`id_usuario`, `email`, `password`, `id_rol`, `nombre`, `id_estado`) VALUES
-(4, 'lau@example.com', '$2b$10$JNw8UvDnif80vSmv1aCdqe0CJzLq.dZ5DyFagSAWUE2UGvPg6u9RS', 3, 'Lauti', 1),
+(4, 'lau@example.com', '$2b$10$JNw8UvDnif80vSmv1aCdqe0CJzLq.dZ5DyFagSAWUE2UGvPg6u9RS', 3, 'Lautaro Bustamante', 1),
 (6, 'solsv7@gmail.com', '$2b$10$JucDwzLHnEQzABUNumPYf.IgNDbtqD9WfPm.K1l2A8ve5j8d35bny', 2, 'Sol', 1),
 (7, 'ivomonti@gmail.com', '$2b$10$JY0E6Fs3l/t8YNp0LRU9n.urFfsF8RFYial53cg/BMTgNmAS565Du', 1, 'Ivo', 1),
 (8, 'Ondinamonti@gmail.com', '$2b$10$q.27TtwF.1TE1JrEZ/b4dOxpbdfOAEBw.QsgxSjF1atSh/3Pk87OW', 1, 'Ondina', 1),
