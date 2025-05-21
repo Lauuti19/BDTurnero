@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Servidor: 127.0.0.1
--- Tiempo de generación: 12-05-2025 a las 17:57:05
+-- Tiempo de generación: 21-05-2025 a las 03:32:59
 -- Versión del servidor: 10.4.32-MariaDB
 -- Versión de PHP: 8.2.12
 
@@ -25,47 +25,72 @@ DELIMITER $$
 --
 -- Procedimientos
 --
-CREATE DEFINER=`root`@`localhost` PROCEDURE `GetAllClasses` ()   BEGIN
+CREATE DEFINER=`root`@`localhost` PROCEDURE `GetAllClasses` (IN `p_fecha` DATE)   BEGIN
+    DECLARE v_dia_semana INT;
+
+    SET v_dia_semana = WEEKDAY(p_fecha) + 1;
+
     SELECT 
-        c.id_clase,
-        c.id_disciplina,
         d.disciplina AS disciplina,
-        c.id_dia,
         di.dia AS dia,
         c.hora,
-        c.capacidad_max,
-        c.disponibles
+        (c.capacidad_max - IFNULL(COUNT(cu.id_usuario), 0)) AS disponibles
     FROM clases c
     JOIN disciplinas d ON c.id_disciplina = d.id_disciplina
-    JOIN dias di ON c.id_dia = di.id_dia;
+    JOIN dias di ON c.id_dia = di.id_dia
+    LEFT JOIN clases_usuarios cu 
+        ON cu.id_clase = c.id_clase AND cu.fecha = p_fecha
+    WHERE c.id_dia = v_dia_semana
+    GROUP BY 
+        c.id_clase, c.id_disciplina, d.disciplina, 
+        c.id_dia, di.dia, c.hora, c.capacidad_max;
 END$$
 
-CREATE DEFINER=`root`@`localhost` PROCEDURE `GetClassesByUser` (IN `p_id_usuario` INT)   BEGIN
+CREATE DEFINER=`root`@`localhost` PROCEDURE `GetClassesByUser` (IN `p_id_usuario` INT, IN `p_fecha` DATE)   BEGIN
     DECLARE v_id_plan INT;
+    DECLARE v_id_cuota INT;
+    DECLARE v_creditos INT;
+    DECLARE v_dia_semana INT;
 
-    -- Obtener el id_plan de la ultima cuota paga del usuario
-    SELECT id_plan INTO v_id_plan
+    -- Obtener el día de la semana (lunes=1, domingo=7)
+    SET v_dia_semana = WEEKDAY(p_fecha) + 1;
+
+    -- Obtener la última cuota válida (paga, con créditos y vigente para la fecha)
+    SELECT id_cuota, id_plan, creditos_disponibles
+    INTO v_id_cuota, v_id_plan, v_creditos
     FROM cuotas
-    WHERE id_usuario = p_id_usuario AND estado_pago = 'Paga'
+    WHERE id_usuario = p_id_usuario
+      AND estado_pago = 'Paga'
+      AND creditos_disponibles > 0
+      AND fecha_vencimiento >= p_fecha
     ORDER BY fecha_pago DESC
     LIMIT 1;
 
-    -- Devolver las clases correspondientes a las disciplinas del plan
-    SELECT c.*
+    -- Validar que haya cuota válida
+    IF v_id_cuota IS NULL THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'No hay cuotas válidas con créditos para la fecha indicada.';
+    END IF;
+
+    -- Seleccionar clases según el plan y filtrando por día de la semana
+    SELECT 
+        c.hora,
+        c.id_clase,
+        (c.capacidad_max - IFNULL(COUNT(cu.id_usuario), 0)) AS disponibles,
+        d.dia AS dia,
+        dis.disciplina AS disciplina
     FROM clases c
     JOIN planes_disciplinas pd ON c.id_disciplina = pd.id_disciplina
-    WHERE pd.id_plan = v_id_plan;
+    JOIN disciplinas dis ON c.id_disciplina = dis.id_disciplina
+    JOIN dias d ON c.id_dia = d.id_dia
+    LEFT JOIN clases_usuarios cu ON cu.id_clase = c.id_clase AND cu.fecha = p_fecha
+    WHERE pd.id_plan = v_id_plan
+      AND c.id_dia = v_dia_semana
+    GROUP BY 
+        c.id_clase, c.hora, c.capacidad_max, c.id_dia, d.dia, c.id_disciplina, dis.disciplina;
 END$$
 
 CREATE DEFINER=`root`@`localhost` PROCEDURE `GetUserByEmail` (IN `p_email` VARCHAR(255))   BEGIN
     SELECT * FROM usuarios WHERE email = p_email;
-END$$
-
-CREATE DEFINER=`root`@`localhost` PROCEDURE `GetUsersByClass` (IN `classId` INT)   BEGIN
-  SELECT u.nombre
-  FROM clases_usuarios cu
-  JOIN usuarios u ON cu.id_usuario = u.id_usuario
-  WHERE cu.id_clase = classId;
 END$$
 
 CREATE DEFINER=`root`@`localhost` PROCEDURE `RegisterClient` (IN `p_email` VARCHAR(255), IN `p_password` VARCHAR(255), IN `p_nombre` VARCHAR(255), IN `p_dni` VARCHAR(20), IN `p_celular` VARCHAR(10))   BEGIN
@@ -82,11 +107,12 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `RegisterClient` (IN `p_email` VARCH
     VALUES (new_user_id, p_dni, p_celular);
 END$$
 
-CREATE DEFINER=`root`@`localhost` PROCEDURE `RegisterToClass` (IN `p_id_usuario` INT, IN `p_id_clase` INT)   BEGIN
+CREATE DEFINER=`root`@`localhost` PROCEDURE `RegisterToClass` (IN `p_id_usuario` INT, IN `p_id_clase` INT, IN `p_fecha` DATE)   BEGIN
     DECLARE v_creditos INT;
-    DECLARE v_disponibles INT;
     DECLARE v_estado_usuario INT;
     DECLARE v_id_cuota INT;
+    DECLARE v_capacidad_max INT;
+    DECLARE v_anotados INT;
 
     -- Verificar si el usuario está activo
     SELECT id_estado INTO v_estado_usuario
@@ -98,42 +124,43 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `RegisterToClass` (IN `p_id_usuario`
         SET MESSAGE_TEXT = 'El usuario no está activo.';
     END IF;
 
-    -- Obtener cuota más reciente con créditos
+    -- Obtener cuota más reciente con créditos y dentro de la fecha de validez
     SELECT id_cuota, creditos_disponibles INTO v_id_cuota, v_creditos
     FROM cuotas
     WHERE id_usuario = p_id_usuario
       AND creditos_disponibles > 0
+      AND fecha_vencimiento >= p_fecha
     ORDER BY fecha_pago DESC
     LIMIT 1;
 
-    IF v_creditos IS NULL OR v_creditos <= 0 THEN
+    -- Verificar si se encontró una cuota válida
+    IF v_id_cuota IS NULL THEN
         SIGNAL SQLSTATE '45000'
-        SET MESSAGE_TEXT = 'No hay créditos disponibles.';
+        SET MESSAGE_TEXT = 'No hay créditos válidos disponibles para esa fecha.';
     END IF;
 
-    -- Verificar si la clase tiene disponibles
-    SELECT disponibles INTO v_disponibles
+    -- Verificar capacidad
+    SELECT capacidad_max INTO v_capacidad_max
     FROM clases
     WHERE id_clase = p_id_clase;
 
-    IF v_disponibles <= 0 THEN
+    SELECT COUNT(*) INTO v_anotados
+    FROM clases_usuarios
+    WHERE id_clase = p_id_clase AND fecha = p_fecha;
+
+    IF v_anotados >= v_capacidad_max THEN
         SIGNAL SQLSTATE '45000'
-        SET MESSAGE_TEXT = 'No hay cupos disponibles en esta clase.';
+        SET MESSAGE_TEXT = 'No hay cupos disponibles en esta clase en la fecha seleccionada.';
     END IF;
 
-    -- Insertar en la tabla intermedia
-    INSERT INTO clases_usuarios (id_clase, id_usuario)
-    VALUES (p_id_clase, p_id_usuario);
+    -- Insertar en la tabla intermedia con fecha
+    INSERT INTO clases_usuarios (id_clase, id_usuario, fecha)
+    VALUES (p_id_clase, p_id_usuario, p_fecha);
 
     -- Descontar crédito en cuota
     UPDATE cuotas
     SET creditos_disponibles = creditos_disponibles - 1
     WHERE id_cuota = v_id_cuota;
-
-    -- Descontar disponible en clase
-    UPDATE clases
-    SET disponibles = disponibles - 1
-    WHERE id_clase = p_id_clase;
 END$$
 
 CREATE DEFINER=`root`@`localhost` PROCEDURE `RegisterUser` (IN `p_email` VARCHAR(255), IN `p_password` VARCHAR(255), IN `p_nombre` VARCHAR(100), IN `p_dni` VARCHAR(20), IN `p_celular` VARCHAR(20), IN `p_id_rol` INT)   BEGIN
@@ -161,45 +188,44 @@ CREATE TABLE `clases` (
   `id_disciplina` int(11) DEFAULT NULL,
   `id_dia` int(11) DEFAULT NULL,
   `hora` time DEFAULT NULL,
-  `capacidad_max` int(11) DEFAULT NULL,
-  `disponibles` int(11) DEFAULT NULL
+  `capacidad_max` int(11) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
 -- Volcado de datos para la tabla `clases`
 --
 
-INSERT INTO `clases` (`id_clase`, `id_disciplina`, `id_dia`, `hora`, `capacidad_max`, `disponibles`) VALUES
-(1, 1, 1, '08:00:00', 20, 19),
-(2, 1, 2, '08:00:00', 20, 19),
-(3, 1, 3, '08:00:00', 20, 20),
-(4, 1, 4, '08:00:00', 20, 20),
-(5, 1, 5, '08:00:00', 20, 20),
-(6, 1, 6, '08:00:00', 20, 20),
-(7, 2, 1, '09:00:00', 20, 20),
-(8, 2, 2, '09:00:00', 20, 20),
-(9, 2, 3, '09:00:00', 20, 20),
-(10, 2, 4, '09:00:00', 20, 20),
-(11, 2, 5, '09:00:00', 20, 20),
-(12, 2, 6, '09:00:00', 20, 20),
-(13, 3, 1, '10:00:00', 20, 20),
-(14, 3, 2, '10:00:00', 20, 20),
-(15, 3, 3, '10:00:00', 20, 20),
-(16, 3, 4, '10:00:00', 20, 20),
-(17, 3, 5, '10:00:00', 20, 20),
-(18, 3, 6, '10:00:00', 20, 20),
-(19, 4, 1, '11:00:00', 20, 20),
-(20, 4, 2, '11:00:00', 20, 20),
-(21, 4, 3, '11:00:00', 20, 20),
-(22, 4, 4, '11:00:00', 20, 20),
-(23, 4, 5, '11:00:00', 20, 20),
-(24, 4, 6, '11:00:00', 20, 20),
-(25, 5, 1, '12:00:00', 20, 20),
-(26, 5, 2, '12:00:00', 20, 20),
-(27, 5, 3, '12:00:00', 20, 20),
-(28, 5, 4, '12:00:00', 20, 20),
-(29, 5, 5, '12:00:00', 20, 20),
-(30, 5, 6, '12:00:00', 20, 20);
+INSERT INTO `clases` (`id_clase`, `id_disciplina`, `id_dia`, `hora`, `capacidad_max`) VALUES
+(1, 1, 1, '08:00:00', 20),
+(2, 1, 2, '08:00:00', 20),
+(3, 1, 3, '08:00:00', 20),
+(4, 1, 4, '08:00:00', 20),
+(5, 1, 5, '08:00:00', 20),
+(6, 1, 6, '08:00:00', 20),
+(7, 2, 1, '09:00:00', 20),
+(8, 2, 2, '09:00:00', 20),
+(9, 2, 3, '09:00:00', 20),
+(10, 2, 4, '09:00:00', 20),
+(11, 2, 5, '09:00:00', 20),
+(12, 2, 6, '09:00:00', 20),
+(13, 3, 1, '10:00:00', 20),
+(14, 3, 2, '10:00:00', 20),
+(15, 3, 3, '10:00:00', 20),
+(16, 3, 4, '10:00:00', 20),
+(17, 3, 5, '10:00:00', 20),
+(18, 3, 6, '10:00:00', 20),
+(19, 4, 1, '11:00:00', 20),
+(20, 4, 2, '11:00:00', 20),
+(21, 4, 3, '11:00:00', 20),
+(22, 4, 4, '11:00:00', 20),
+(23, 4, 5, '11:00:00', 20),
+(24, 4, 6, '11:00:00', 20),
+(25, 5, 1, '12:00:00', 20),
+(26, 5, 2, '12:00:00', 20),
+(27, 5, 3, '12:00:00', 20),
+(28, 5, 4, '12:00:00', 20),
+(29, 5, 5, '12:00:00', 20),
+(30, 5, 6, '12:00:00', 20);
 
 -- --------------------------------------------------------
 
@@ -210,16 +236,18 @@ INSERT INTO `clases` (`id_clase`, `id_disciplina`, `id_dia`, `hora`, `capacidad_
 CREATE TABLE `clases_usuarios` (
   `id_clase` int(11) NOT NULL,
   `id_usuario` int(11) NOT NULL,
-  `presente` tinyint(1) DEFAULT NULL
+  `presente` tinyint(1) DEFAULT NULL,
+  `fecha` date NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
 -- Volcado de datos para la tabla `clases_usuarios`
 --
 
-INSERT INTO `clases_usuarios` (`id_clase`, `id_usuario`, `presente`) VALUES
-(1, 4, NULL),
-(2, 4, NULL);
+INSERT INTO `clases_usuarios` (`id_clase`, `id_usuario`, `presente`, `fecha`) VALUES
+(1, 4, NULL, '2025-06-06'),
+(1, 4, NULL, '2025-06-09'),
+(10, 4, NULL, '2025-06-05');
 
 -- --------------------------------------------------------
 
@@ -243,7 +271,7 @@ CREATE TABLE `cuotas` (
 --
 
 INSERT INTO `cuotas` (`id_cuota`, `id_usuario`, `id_plan`, `fecha_pago`, `fecha_vencimiento`, `estado_pago`, `creditos_total`, `creditos_disponibles`) VALUES
-(1, 4, 1, '2025-05-12', '2025-06-11', 'Paga', 8, 6);
+(1, 4, 1, '2025-05-12', '2025-06-11', 'Paga', 8, 1);
 
 -- --------------------------------------------------------
 
@@ -437,7 +465,7 @@ ALTER TABLE `clases`
 -- Indices de la tabla `clases_usuarios`
 --
 ALTER TABLE `clases_usuarios`
-  ADD PRIMARY KEY (`id_clase`,`id_usuario`),
+  ADD PRIMARY KEY (`id_clase`,`id_usuario`,`fecha`),
   ADD KEY `id_usuario` (`id_usuario`);
 
 --
