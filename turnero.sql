@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Servidor: 127.0.0.1
--- Tiempo de generación: 21-05-2025 a las 03:32:59
+-- Tiempo de generación: 02-06-2025 a las 20:27:15
 -- Versión del servidor: 10.4.32-MariaDB
 -- Versión de PHP: 8.2.12
 
@@ -25,15 +25,22 @@ DELIMITER $$
 --
 -- Procedimientos
 --
+CREATE DEFINER=`root`@`localhost` PROCEDURE `BuscarUsuariosPorNombre` (IN `nombre_busqueda` VARCHAR(100))   BEGIN
+    SELECT id_usuario, nombre
+    FROM usuarios
+    WHERE nombre LIKE CONCAT('%', nombre_busqueda, '%');
+END$$
+
 CREATE DEFINER=`root`@`localhost` PROCEDURE `GetAllClasses` (IN `p_fecha` DATE)   BEGIN
     DECLARE v_dia_semana INT;
 
     SET v_dia_semana = WEEKDAY(p_fecha) + 1;
 
-    SELECT 
+    SELECT
         d.disciplina AS disciplina,
         di.dia AS dia,
         c.hora,
+        c.id_clase,
         (c.capacidad_max - IFNULL(COUNT(cu.id_usuario), 0)) AS disponibles
     FROM clases c
     JOIN disciplinas d ON c.id_disciplina = d.id_disciplina
@@ -89,8 +96,58 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `GetClassesByUser` (IN `p_id_usuario
         c.id_clase, c.hora, c.capacidad_max, c.id_dia, d.dia, c.id_disciplina, dis.disciplina;
 END$$
 
+CREATE DEFINER=`root`@`localhost` PROCEDURE `GetInfoCuotas` (IN `n_id_usuario` INT)   BEGIN
+    SELECT
+      cuotas.id_usuario,
+      SUM(cuotas.creditos_disponibles) AS creditos_disponibles_totales
+    FROM cuotas
+    WHERE cuotas.id_usuario = n_id_usuario
+    GROUP BY cuotas.id_usuario;
+END$$
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `GetPlanes` ()   BEGIN
+    SELECT id_plan, nombre, descripcion, monto, creditos_total
+    FROM planes;
+END$$
+
 CREATE DEFINER=`root`@`localhost` PROCEDURE `GetUserByEmail` (IN `p_email` VARCHAR(255))   BEGIN
     SELECT * FROM usuarios WHERE email = p_email;
+END$$
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `GetUserFullInfo` (IN `p_id_usuario` INT)   BEGIN
+    SELECT 
+        u.id_usuario,
+        u.email,
+        r.rol,
+        dp.dni,
+        dp.celular,
+        p.nombre AS nombre_plan,
+        c.fecha_pago,
+        c.fecha_vencimiento,
+        c.estado_pago,
+        c.creditos_total,
+        c.creditos_disponibles
+    FROM usuarios u
+    JOIN roles r ON u.id_rol = r.id_rol
+    LEFT JOIN datos_personales dp ON u.id_usuario = dp.id_usuario
+    LEFT JOIN (
+        SELECT *
+        FROM cuotas
+        WHERE id_usuario = p_id_usuario
+          AND fecha_vencimiento >= CURDATE()
+        ORDER BY fecha_pago DESC
+        LIMIT 1
+    ) c ON u.id_usuario = c.id_usuario
+    LEFT JOIN planes p ON c.id_plan = p.id_plan
+    WHERE u.id_usuario = p_id_usuario;
+END$$
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `GetUsersByClassAndDate` (IN `p_class_id` INT, IN `p_date` DATE)   BEGIN
+    SELECT u.nombre
+    FROM clases_usuarios cu
+    JOIN usuarios u ON cu.id_usuario = u.id_usuario
+    WHERE cu.id_clase = p_class_id
+      AND cu.fecha = p_date;
 END$$
 
 CREATE DEFINER=`root`@`localhost` PROCEDURE `RegisterClient` (IN `p_email` VARCHAR(255), IN `p_password` VARCHAR(255), IN `p_nombre` VARCHAR(255), IN `p_dni` VARCHAR(20), IN `p_celular` VARCHAR(10))   BEGIN
@@ -175,6 +232,88 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `RegisterUser` (IN `p_email` VARCHAR
     VALUES (new_user_id, p_dni, p_celular);
 END$$
 
+CREATE DEFINER=`root`@`localhost` PROCEDURE `RegistrarCuotaPorNombre` (IN `p_nombre_usuario` VARCHAR(100), IN `p_id_plan` INT, IN `p_fecha_pago` DATE)   BEGIN
+    DECLARE v_id_usuario INT;
+    DECLARE v_creditos_total INT DEFAULT 8;
+    DECLARE v_fecha_vencimiento DATE;
+
+    -- Busca el id_usuario por nombre exacto
+    SELECT id_usuario INTO v_id_usuario
+    FROM usuarios
+    WHERE nombre = p_nombre_usuario
+    LIMIT 1;
+
+    SET v_fecha_vencimiento = DATE_ADD(p_fecha_pago, INTERVAL 1 MONTH);
+
+    INSERT INTO cuotas (
+        id_usuario,
+        id_plan,
+        fecha_pago,
+        fecha_vencimiento,
+        estado_pago,
+        creditos_total,
+        creditos_disponibles
+    ) VALUES (
+        v_id_usuario,
+        p_id_plan,
+        p_fecha_pago,
+        v_fecha_vencimiento,
+        'Paga',
+        v_creditos_total,
+        v_creditos_total
+    );
+END$$
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `UnregisterFromClass` (IN `p_id_usuario` INT, IN `p_id_clase` INT, IN `p_fecha` DATE)   BEGIN
+    DECLARE v_id_cuota INT;
+    DECLARE v_estado_usuario INT;
+
+    -- Verificar si el usuario está activo
+    SELECT id_estado INTO v_estado_usuario
+    FROM usuarios
+    WHERE id_usuario = p_id_usuario;
+
+    IF v_estado_usuario != 1 THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'El usuario no está activo.';
+    END IF;
+
+    -- Verificar si está anotado en esa clase en esa fecha
+    IF NOT EXISTS (
+        SELECT 1 FROM clases_usuarios
+        WHERE id_usuario = p_id_usuario
+          AND id_clase = p_id_clase
+          AND fecha = p_fecha
+    ) THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'El usuario no está anotado en esta clase para la fecha indicada.';
+    END IF;
+
+    -- Obtener cuota válida usada
+    SELECT id_cuota INTO v_id_cuota
+    FROM cuotas
+    WHERE id_usuario = p_id_usuario
+      AND fecha_vencimiento >= p_fecha
+    ORDER BY fecha_pago DESC
+    LIMIT 1;
+
+    IF v_id_cuota IS NULL THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'No se encontró una cuota válida para la fecha indicada.';
+    END IF;
+
+    -- Eliminar la inscripción
+    DELETE FROM clases_usuarios
+    WHERE id_usuario = p_id_usuario
+      AND id_clase = p_id_clase
+      AND fecha = p_fecha;
+
+    -- Sumar 1 crédito a la cuota usada
+    UPDATE cuotas
+    SET creditos_disponibles = creditos_disponibles + 1
+    WHERE id_cuota = v_id_cuota;
+END$$
+
 DELIMITER ;
 
 -- --------------------------------------------------------
@@ -245,8 +384,9 @@ CREATE TABLE `clases_usuarios` (
 --
 
 INSERT INTO `clases_usuarios` (`id_clase`, `id_usuario`, `presente`, `fecha`) VALUES
-(1, 4, NULL, '2025-06-06'),
-(1, 4, NULL, '2025-06-09'),
+(1, 4, NULL, '2025-05-26'),
+(2, 4, NULL, '2025-05-27'),
+(7, 4, NULL, '2025-05-26'),
 (10, 4, NULL, '2025-06-05');
 
 -- --------------------------------------------------------
@@ -271,7 +411,8 @@ CREATE TABLE `cuotas` (
 --
 
 INSERT INTO `cuotas` (`id_cuota`, `id_usuario`, `id_plan`, `fecha_pago`, `fecha_vencimiento`, `estado_pago`, `creditos_total`, `creditos_disponibles`) VALUES
-(1, 4, 1, '2025-05-12', '2025-06-11', 'Paga', 8, 1);
+(1, 4, 1, '2025-05-12', '2025-06-11', 'Paga', 8, 28),
+(2, 9, 1, '2025-05-26', '2025-06-26', 'Paga', 8, 8);
 
 -- --------------------------------------------------------
 
@@ -541,7 +682,7 @@ ALTER TABLE `clases`
 -- AUTO_INCREMENT de la tabla `cuotas`
 --
 ALTER TABLE `cuotas`
-  MODIFY `id_cuota` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
+  MODIFY `id_cuota` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
 
 --
 -- AUTO_INCREMENT de la tabla `dias`
