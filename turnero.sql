@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Servidor: 127.0.0.1
--- Tiempo de generación: 02-06-2025 a las 20:27:15
+-- Tiempo de generación: 03-06-2025 a las 01:21:52
 -- Versión del servidor: 10.4.32-MariaDB
 -- Versión de PHP: 8.2.12
 
@@ -29,6 +29,11 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `BuscarUsuariosPorNombre` (IN `nombr
     SELECT id_usuario, nombre
     FROM usuarios
     WHERE nombre LIKE CONCAT('%', nombre_busqueda, '%');
+END$$
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `CreateClass` (IN `p_id_disciplina` INT, IN `p_id_dia` INT, IN `p_hora` TIME, IN `p_capacidad_max` INT)   BEGIN
+    INSERT INTO clases (id_disciplina, id_dia, hora, capacidad_max)
+    VALUES (p_id_disciplina, p_id_dia, p_hora, p_capacidad_max);
 END$$
 
 CREATE DEFINER=`root`@`localhost` PROCEDURE `GetAllClasses` (IN `p_fecha` DATE)   BEGIN
@@ -143,7 +148,8 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `GetUserFullInfo` (IN `p_id_usuario`
 END$$
 
 CREATE DEFINER=`root`@`localhost` PROCEDURE `GetUsersByClassAndDate` (IN `p_class_id` INT, IN `p_date` DATE)   BEGIN
-    SELECT u.nombre
+    SELECT u.id_usuario,
+    u.nombre
     FROM clases_usuarios cu
     JOIN usuarios u ON cu.id_usuario = u.id_usuario
     WHERE cu.id_clase = p_class_id
@@ -364,7 +370,8 @@ INSERT INTO `clases` (`id_clase`, `id_disciplina`, `id_dia`, `hora`, `capacidad_
 (27, 5, 3, '12:00:00', 20),
 (28, 5, 4, '12:00:00', 20),
 (29, 5, 5, '12:00:00', 20),
-(30, 5, 6, '12:00:00', 20);
+(30, 5, 6, '12:00:00', 20),
+(31, 5, 1, '13:00:00', 10);
 
 -- --------------------------------------------------------
 
@@ -676,7 +683,7 @@ ALTER TABLE `usuarios`
 -- AUTO_INCREMENT de la tabla `clases`
 --
 ALTER TABLE `clases`
-  MODIFY `id_clase` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=31;
+  MODIFY `id_clase` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=32;
 
 --
 -- AUTO_INCREMENT de la tabla `cuotas`
