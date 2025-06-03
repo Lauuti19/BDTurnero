@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Servidor: 127.0.0.1
--- Tiempo de generación: 03-06-2025 a las 01:21:52
+-- Tiempo de generación: 03-06-2025 a las 02:16:38
 -- Versión del servidor: 10.4.32-MariaDB
 -- Versión de PHP: 8.2.12
 
@@ -56,6 +56,19 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `GetAllClasses` (IN `p_fecha` DATE) 
     GROUP BY 
         c.id_clase, c.id_disciplina, d.disciplina, 
         c.id_dia, di.dia, c.hora, c.capacidad_max;
+END$$
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `GetClassesByDay` (IN `p_id_dia` INT)   BEGIN
+    SELECT 
+        c.id_clase,
+        c.id_disciplina,
+        d.disciplina,
+        c.hora,
+        c.capacidad_max
+    FROM clases c
+    JOIN disciplinas d ON c.id_disciplina = d.id_disciplina
+    WHERE c.id_dia = p_id_dia
+    ORDER BY c.hora;
 END$$
 
 CREATE DEFINER=`root`@`localhost` PROCEDURE `GetClassesByUser` (IN `p_id_usuario` INT, IN `p_fecha` DATE)   BEGIN
