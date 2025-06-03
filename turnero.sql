@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Servidor: 127.0.0.1
--- Tiempo de generación: 03-06-2025 a las 02:16:38
+-- Tiempo de generación: 03-06-2025 a las 22:11:21
 -- Versión del servidor: 10.4.32-MariaDB
 -- Versión de PHP: 8.2.12
 
@@ -36,6 +36,34 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `CreateClass` (IN `p_id_disciplina` 
     VALUES (p_id_disciplina, p_id_dia, p_hora, p_capacidad_max);
 END$$
 
+CREATE DEFINER=`root`@`localhost` PROCEDURE `CreateDiscipline` (IN `p_nombre` VARCHAR(100))   BEGIN
+    INSERT INTO disciplinas (disciplina, activa)
+    VALUES (p_nombre, TRUE);
+END$$
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `CreatePlan` (IN `p_nombre` VARCHAR(100), IN `p_descripcion` TEXT, IN `p_monto` DECIMAL(10,2), IN `p_creditos_total` INT)   BEGIN
+    INSERT INTO planes (nombre, descripcion, monto, creditos_total, activa)
+    VALUES (p_nombre, p_descripcion, p_monto, p_creditos_total, TRUE);
+END$$
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `DeleteClass` (IN `p_id_clase` INT)   BEGIN
+    UPDATE clases
+    SET activa = FALSE
+    WHERE id_clase = p_id_clase;
+END$$
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `DeleteDisciplina` (IN `p_id_disciplina` INT)   BEGIN
+    UPDATE disciplinas
+    SET activa = FALSE
+    WHERE id_disciplina = p_id_disciplina;
+END$$
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `DeletePlan` (IN `p_id_plan` INT)   BEGIN
+    UPDATE planes
+    SET activa = FALSE
+    WHERE id_plan = p_id_plan;
+END$$
+
 CREATE DEFINER=`root`@`localhost` PROCEDURE `GetAllClasses` (IN `p_fecha` DATE)   BEGIN
     DECLARE v_dia_semana INT;
 
@@ -53,6 +81,8 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `GetAllClasses` (IN `p_fecha` DATE) 
     LEFT JOIN clases_usuarios cu 
         ON cu.id_clase = c.id_clase AND cu.fecha = p_fecha
     WHERE c.id_dia = v_dia_semana
+    	AND c.activa = TRUE
+        AND d.activa = TRUE
     GROUP BY 
         c.id_clase, c.id_disciplina, d.disciplina, 
         c.id_dia, di.dia, c.hora, c.capacidad_max;
@@ -68,6 +98,8 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `GetClassesByDay` (IN `p_id_dia` INT
     FROM clases c
     JOIN disciplinas d ON c.id_disciplina = d.id_disciplina
     WHERE c.id_dia = p_id_dia
+    AND c.activa = TRUE
+    AND d.activa = TRUE
     ORDER BY c.hora;
 END$$
 
@@ -110,8 +142,16 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `GetClassesByUser` (IN `p_id_usuario
     LEFT JOIN clases_usuarios cu ON cu.id_clase = c.id_clase AND cu.fecha = p_fecha
     WHERE pd.id_plan = v_id_plan
       AND c.id_dia = v_dia_semana
+      AND c.activa = TRUE
+      AND dis.activa = TRUE
     GROUP BY 
         c.id_clase, c.hora, c.capacidad_max, c.id_dia, d.dia, c.id_disciplina, dis.disciplina;
+END$$
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `GetDisciplinas` ()   BEGIN
+    SELECT id_disciplina, disciplina
+    FROM disciplinas
+    WHERE activa = TRUE;
 END$$
 
 CREATE DEFINER=`root`@`localhost` PROCEDURE `GetInfoCuotas` (IN `n_id_usuario` INT)   BEGIN
@@ -125,7 +165,8 @@ END$$
 
 CREATE DEFINER=`root`@`localhost` PROCEDURE `GetPlanes` ()   BEGIN
     SELECT id_plan, nombre, descripcion, monto, creditos_total
-    FROM planes;
+    FROM planes
+    WHERE activa = TRUE;
 END$$
 
 CREATE DEFINER=`root`@`localhost` PROCEDURE `GetUserByEmail` (IN `p_email` VARCHAR(255))   BEGIN
@@ -333,6 +374,26 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `UnregisterFromClass` (IN `p_id_usua
     WHERE id_cuota = v_id_cuota;
 END$$
 
+CREATE DEFINER=`root`@`localhost` PROCEDURE `UpdateClasses` (IN `p_id_clase` INT, IN `p_id_disciplina` INT, IN `p_id_dia` INT, IN `p_hora` TIME, IN `p_capacidad_max` INT)   BEGIN
+    UPDATE clases
+    SET 
+        id_disciplina = COALESCE(p_id_disciplina, id_disciplina),
+        id_dia = COALESCE(p_id_dia, id_dia),
+        hora = COALESCE(p_hora, hora),
+        capacidad_max = COALESCE(p_capacidad_max, capacidad_max)
+    WHERE id_clase = p_id_clase;
+END$$
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `UpdatePlan` (IN `p_id_plan` INT, IN `p_nombre` VARCHAR(100), IN `p_descripcion` TEXT, IN `p_monto` DECIMAL(10,2), IN `p_creditos_total` INT)   BEGIN
+    UPDATE planes
+    SET 
+        nombre = COALESCE(p_nombre, nombre),
+        descripcion = COALESCE(p_descripcion, descripcion),
+        monto = COALESCE(p_monto, monto),
+        creditos_total = COALESCE(p_creditos_total, creditos_total)
+    WHERE id_plan = p_id_plan;
+END$$
+
 DELIMITER ;
 
 -- --------------------------------------------------------
@@ -346,45 +407,46 @@ CREATE TABLE `clases` (
   `id_disciplina` int(11) DEFAULT NULL,
   `id_dia` int(11) DEFAULT NULL,
   `hora` time DEFAULT NULL,
-  `capacidad_max` int(11) DEFAULT NULL
+  `capacidad_max` int(11) DEFAULT NULL,
+  `activa` tinyint(1) DEFAULT 1
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
 -- Volcado de datos para la tabla `clases`
 --
 
-INSERT INTO `clases` (`id_clase`, `id_disciplina`, `id_dia`, `hora`, `capacidad_max`) VALUES
-(1, 1, 1, '08:00:00', 20),
-(2, 1, 2, '08:00:00', 20),
-(3, 1, 3, '08:00:00', 20),
-(4, 1, 4, '08:00:00', 20),
-(5, 1, 5, '08:00:00', 20),
-(6, 1, 6, '08:00:00', 20),
-(7, 2, 1, '09:00:00', 20),
-(8, 2, 2, '09:00:00', 20),
-(9, 2, 3, '09:00:00', 20),
-(10, 2, 4, '09:00:00', 20),
-(11, 2, 5, '09:00:00', 20),
-(12, 2, 6, '09:00:00', 20),
-(13, 3, 1, '10:00:00', 20),
-(14, 3, 2, '10:00:00', 20),
-(15, 3, 3, '10:00:00', 20),
-(16, 3, 4, '10:00:00', 20),
-(17, 3, 5, '10:00:00', 20),
-(18, 3, 6, '10:00:00', 20),
-(19, 4, 1, '11:00:00', 20),
-(20, 4, 2, '11:00:00', 20),
-(21, 4, 3, '11:00:00', 20),
-(22, 4, 4, '11:00:00', 20),
-(23, 4, 5, '11:00:00', 20),
-(24, 4, 6, '11:00:00', 20),
-(25, 5, 1, '12:00:00', 20),
-(26, 5, 2, '12:00:00', 20),
-(27, 5, 3, '12:00:00', 20),
-(28, 5, 4, '12:00:00', 20),
-(29, 5, 5, '12:00:00', 20),
-(30, 5, 6, '12:00:00', 20),
-(31, 5, 1, '13:00:00', 10);
+INSERT INTO `clases` (`id_clase`, `id_disciplina`, `id_dia`, `hora`, `capacidad_max`, `activa`) VALUES
+(1, 1, 1, '18:00:00', 20, 1),
+(2, 1, 2, '08:00:00', 20, 1),
+(3, 1, 3, '08:00:00', 20, 1),
+(4, 1, 4, '08:00:00', 20, 1),
+(5, 1, 5, '08:00:00', 20, 1),
+(6, 1, 6, '08:00:00', 20, 1),
+(7, 2, 1, '09:00:00', 20, 1),
+(8, 2, 2, '09:00:00', 20, 1),
+(9, 2, 3, '09:00:00', 20, 1),
+(10, 2, 4, '09:00:00', 20, 1),
+(11, 2, 5, '09:00:00', 20, 1),
+(12, 2, 6, '09:00:00', 20, 1),
+(13, 3, 1, '10:00:00', 20, 1),
+(14, 3, 2, '10:00:00', 20, 1),
+(15, 3, 3, '10:00:00', 20, 1),
+(16, 3, 4, '10:00:00', 20, 1),
+(17, 3, 5, '10:00:00', 20, 1),
+(18, 3, 6, '10:00:00', 20, 1),
+(19, 4, 1, '11:00:00', 20, 1),
+(20, 4, 2, '11:00:00', 20, 1),
+(21, 4, 3, '11:00:00', 20, 1),
+(22, 4, 4, '11:00:00', 20, 1),
+(23, 4, 5, '11:00:00', 20, 1),
+(24, 4, 6, '11:00:00', 20, 1),
+(25, 5, 1, '12:00:00', 20, 1),
+(26, 5, 2, '12:00:00', 20, 1),
+(27, 5, 3, '12:00:00', 20, 1),
+(28, 5, 4, '12:00:00', 20, 1),
+(29, 5, 5, '12:00:00', 20, 1),
+(30, 5, 6, '12:00:00', 20, 1),
+(31, 5, 1, '13:00:00', 10, 1);
 
 -- --------------------------------------------------------
 
@@ -489,19 +551,21 @@ INSERT INTO `dias` (`id_dia`, `dia`) VALUES
 
 CREATE TABLE `disciplinas` (
   `id_disciplina` int(11) NOT NULL,
-  `disciplina` varchar(100) DEFAULT NULL
+  `disciplina` varchar(100) DEFAULT NULL,
+  `activa` tinyint(1) DEFAULT 1
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
 -- Volcado de datos para la tabla `disciplinas`
 --
 
-INSERT INTO `disciplinas` (`id_disciplina`, `disciplina`) VALUES
-(1, 'Crossfit'),
-(2, 'Funcional'),
-(3, 'Musculación'),
-(4, 'Open box'),
-(5, 'Levantamiento olímpico');
+INSERT INTO `disciplinas` (`id_disciplina`, `disciplina`, `activa`) VALUES
+(1, 'Crossfit', 1),
+(2, 'Funcional', 1),
+(3, 'Musculación', 1),
+(4, 'Open box', 1),
+(5, 'Levantamiento olímpico', 1),
+(6, 'Pilates', 1);
 
 -- --------------------------------------------------------
 
@@ -534,15 +598,17 @@ CREATE TABLE `planes` (
   `nombre` varchar(100) NOT NULL,
   `descripcion` text DEFAULT NULL,
   `monto` decimal(10,2) NOT NULL,
-  `creditos_total` int(11) NOT NULL
+  `creditos_total` int(11) NOT NULL,
+  `activa` tinyint(1) DEFAULT 1
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
 -- Volcado de datos para la tabla `planes`
 --
 
-INSERT INTO `planes` (`id_plan`, `nombre`, `descripcion`, `monto`, `creditos_total`) VALUES
-(1, 'Plan 8c multidisciplina', 'Permite asistir dos veces por semana a dos disciplinas', 20000.00, 8);
+INSERT INTO `planes` (`id_plan`, `nombre`, `descripcion`, `monto`, `creditos_total`, `activa`) VALUES
+(1, 'Plan 8c multidisciplina', 'Permite asistir dos veces por semana a dos disciplinas', 20000.00, 8, 1),
+(3, 'Crossfit Semanal', '6 creditos semanales para Crossfit', 26000.00, 24, 1);
 
 -- --------------------------------------------------------
 
@@ -714,7 +780,7 @@ ALTER TABLE `dias`
 -- AUTO_INCREMENT de la tabla `disciplinas`
 --
 ALTER TABLE `disciplinas`
-  MODIFY `id_disciplina` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=6;
+  MODIFY `id_disciplina` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=7;
 
 --
 -- AUTO_INCREMENT de la tabla `estados`
@@ -726,7 +792,7 @@ ALTER TABLE `estados`
 -- AUTO_INCREMENT de la tabla `planes`
 --
 ALTER TABLE `planes`
-  MODIFY `id_plan` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
+  MODIFY `id_plan` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
 
 --
 -- AUTO_INCREMENT de la tabla `roles`
