@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Servidor: 127.0.0.1
--- Tiempo de generación: 03-06-2025 a las 22:11:21
+-- Tiempo de generación: 04-06-2025 a las 02:40:25
 -- Versión del servidor: 10.4.32-MariaDB
 -- Versión de PHP: 8.2.12
 
@@ -394,6 +394,20 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `UpdatePlan` (IN `p_id_plan` INT, IN
     WHERE id_plan = p_id_plan;
 END$$
 
+CREATE DEFINER=`root`@`localhost` PROCEDURE `UpdateUserInfo` (IN `p_id_usuario` INT, IN `p_nombre` VARCHAR(100), IN `p_email` VARCHAR(100), IN `p_dni` VARCHAR(20), IN `p_celular` VARCHAR(20))   BEGIN
+    UPDATE usuarios
+    SET 
+        nombre = COALESCE(p_nombre, nombre),
+        email = COALESCE(p_email, email)
+    WHERE id_usuario = p_id_usuario;
+
+    UPDATE datos_personales
+    SET 
+        dni = COALESCE(p_dni, dni),
+        celular = COALESCE(p_celular, celular)
+    WHERE id_usuario = p_id_usuario;
+END$$
+
 DELIMITER ;
 
 -- --------------------------------------------------------
@@ -515,7 +529,7 @@ CREATE TABLE `datos_personales` (
 INSERT INTO `datos_personales` (`id_usuario`, `dni`, `celular`) VALUES
 (4, '46999888', '1133445566'),
 (6, '41991328', '2364310386'),
-(7, '41717495', '2364600084'),
+(7, '41717495', '1199999999'),
 (8, '345678495', '2345687964'),
 (9, '37685437', '2364536786'),
 (10, '34567685', '2364532432');
@@ -671,7 +685,7 @@ CREATE TABLE `usuarios` (
 INSERT INTO `usuarios` (`id_usuario`, `email`, `password`, `id_rol`, `nombre`, `id_estado`) VALUES
 (4, 'lau@example.com', '$2b$10$JNw8UvDnif80vSmv1aCdqe0CJzLq.dZ5DyFagSAWUE2UGvPg6u9RS', 3, 'Lautaro Bustamante', 1),
 (6, 'solsv7@gmail.com', '$2b$10$JucDwzLHnEQzABUNumPYf.IgNDbtqD9WfPm.K1l2A8ve5j8d35bny', 2, 'Sol', 1),
-(7, 'ivomonti@gmail.com', '$2b$10$JY0E6Fs3l/t8YNp0LRU9n.urFfsF8RFYial53cg/BMTgNmAS565Du', 1, 'Ivo', 1),
+(7, 'ivomonti1@gmail.com', '$2b$10$JY0E6Fs3l/t8YNp0LRU9n.urFfsF8RFYial53cg/BMTgNmAS565Du', 1, 'Ivo', 1),
 (8, 'Ondinamonti@gmail.com', '$2b$10$q.27TtwF.1TE1JrEZ/b4dOxpbdfOAEBw.QsgxSjF1atSh/3Pk87OW', 1, 'Ondina', 1),
 (9, 'flaviacalde@gmail.com', '$2b$10$0ughXdWBz5/305dM3U4sLu/DhvN0f4KmIynmWBItqp/ehXTQ1fhe.', 2, 'Flavia Calderon', 1),
 (10, 'agusf@gmail.com', '$2b$10$puRGvIfbzdiNaYnVfI9BsuqS43MkyIa5XFH9b6IEduRjgupnFID.G', 3, 'Agustin Fernandez', 2);
