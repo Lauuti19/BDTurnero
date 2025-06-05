@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Servidor: 127.0.0.1
--- Tiempo de generación: 04-06-2025 a las 02:40:25
+-- Tiempo de generación: 06-06-2025 a las 01:21:20
 -- Versión del servidor: 10.4.32-MariaDB
 -- Versión de PHP: 8.2.12
 
@@ -26,9 +26,31 @@ DELIMITER $$
 -- Procedimientos
 --
 CREATE DEFINER=`root`@`localhost` PROCEDURE `BuscarUsuariosPorNombre` (IN `nombre_busqueda` VARCHAR(100))   BEGIN
-    SELECT id_usuario, nombre
-    FROM usuarios
-    WHERE nombre LIKE CONCAT('%', nombre_busqueda, '%');
+    SELECT 
+        u.id_usuario,
+        u.email,
+        r.rol,
+        u.nombre,
+        dp.dni,
+        dp.celular,
+        p.nombre AS nombre_plan,
+        c.fecha_pago,
+        c.fecha_vencimiento,
+        c.estado_pago,
+        c.creditos_total,
+        c.creditos_disponibles
+    FROM usuarios u
+    JOIN roles r ON u.id_rol = r.id_rol
+    LEFT JOIN datos_personales dp ON u.id_usuario = dp.id_usuario
+    LEFT JOIN (
+        SELECT id_usuario, id_plan, fecha_pago, fecha_vencimiento, estado_pago, creditos_total, creditos_disponibles
+        FROM cuotas
+        WHERE fecha_vencimiento >= CURDATE()
+        ORDER BY fecha_pago DESC
+    ) c ON u.id_usuario = c.id_usuario
+    LEFT JOIN planes p ON c.id_plan = p.id_plan
+    WHERE u.nombre LIKE CONCAT('%', nombre_busqueda, '%')
+    GROUP BY u.id_usuario;
 END$$
 
 CREATE DEFINER=`root`@`localhost` PROCEDURE `CreateClass` (IN `p_id_disciplina` INT, IN `p_id_dia` INT, IN `p_hora` TIME, IN `p_capacidad_max` INT)   BEGIN
@@ -382,6 +404,12 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `UpdateClasses` (IN `p_id_clase` INT
         hora = COALESCE(p_hora, hora),
         capacidad_max = COALESCE(p_capacidad_max, capacidad_max)
     WHERE id_clase = p_id_clase;
+END$$
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `UpdatePassword` (IN `p_id_usuario` INT, IN `p_password_hash` VARCHAR(255))   BEGIN
+  UPDATE usuarios
+  SET password = p_password_hash
+  WHERE id_usuario = p_id_usuario;
 END$$
 
 CREATE DEFINER=`root`@`localhost` PROCEDURE `UpdatePlan` (IN `p_id_plan` INT, IN `p_nombre` VARCHAR(100), IN `p_descripcion` TEXT, IN `p_monto` DECIMAL(10,2), IN `p_creditos_total` INT)   BEGIN
