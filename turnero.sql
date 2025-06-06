@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Servidor: 127.0.0.1
--- Tiempo de generación: 06-06-2025 a las 02:16:33
+-- Tiempo de generación: 06-06-2025 a las 20:35:59
 -- Versión del servidor: 10.4.32-MariaDB
 -- Versión de PHP: 8.2.12
 
@@ -112,6 +112,11 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `DeleteDisciplina` (IN `p_id_discipl
 END$$
 
 CREATE DEFINER=`root`@`localhost` PROCEDURE `DeletePlan` (IN `p_id_plan` INT)   BEGIN
+    -- Eliminar relaciones en planes_disciplinas
+    DELETE FROM planes_disciplinas
+    WHERE id_plan = p_id_plan;
+
+    -- Desactivar el plan
     UPDATE planes
     SET activa = FALSE
     WHERE id_plan = p_id_plan;
@@ -682,7 +687,7 @@ CREATE TABLE `planes` (
 INSERT INTO `planes` (`id_plan`, `nombre`, `descripcion`, `monto`, `creditos_total`, `activa`) VALUES
 (1, 'Plan 8c multidisciplina', 'Permite asistir dos veces por semana a dos disciplinas', 20000.00, 8, 1),
 (3, 'Crossfit Semanal', '6 creditos semanales para Crossfit', 26000.00, 24, 1),
-(4, 'Plan Full', 'Acceso a todas las disciplinas', 25000.00, 24, 1);
+(4, 'Plan Full', 'Acceso a todas las disciplinas', 25000.00, 24, 0);
 
 -- --------------------------------------------------------
 
@@ -701,11 +706,7 @@ CREATE TABLE `planes_disciplinas` (
 
 INSERT INTO `planes_disciplinas` (`id_plan`, `id_disciplina`) VALUES
 (1, 1),
-(1, 2),
-(4, 1),
-(4, 2),
-(4, 3),
-(4, 5);
+(1, 2);
 
 -- --------------------------------------------------------
 
