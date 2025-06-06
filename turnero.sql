@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Servidor: 127.0.0.1
--- Tiempo de generación: 06-06-2025 a las 01:21:20
+-- Tiempo de generación: 06-06-2025 a las 02:16:33
 -- Versión del servidor: 10.4.32-MariaDB
 -- Versión de PHP: 8.2.12
 
@@ -63,9 +63,40 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `CreateDiscipline` (IN `p_nombre` VA
     VALUES (p_nombre, TRUE);
 END$$
 
-CREATE DEFINER=`root`@`localhost` PROCEDURE `CreatePlan` (IN `p_nombre` VARCHAR(100), IN `p_descripcion` TEXT, IN `p_monto` DECIMAL(10,2), IN `p_creditos_total` INT)   BEGIN
+CREATE DEFINER=`root`@`localhost` PROCEDURE `CreatePlan` (IN `p_nombre` VARCHAR(100), IN `p_descripcion` TEXT, IN `p_monto` DECIMAL(10,2), IN `p_creditos_total` INT, IN `p_disciplinas` TEXT)   BEGIN
+    DECLARE v_id_plan INT;
+    DECLARE done INT DEFAULT FALSE;
+    DECLARE disciplina_id INT;
+    DECLARE cur CURSOR FOR SELECT CAST(TRIM(SUBSTRING_INDEX(SUBSTRING_INDEX(p_disciplinas, ',', n.n), ',', -1)) AS UNSIGNED) AS id
+                           FROM (SELECT a.N + b.N * 10 + 1 AS n
+                                 FROM (SELECT 0 AS N UNION SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4
+                                       UNION SELECT 5 UNION SELECT 6 UNION SELECT 7 UNION SELECT 8 UNION SELECT 9) a,
+                                      (SELECT 0 AS N UNION SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4
+                                       UNION SELECT 5 UNION SELECT 6 UNION SELECT 7 UNION SELECT 8 UNION SELECT 9) b
+                                 WHERE a.N + b.N * 10 + 1 <= LENGTH(p_disciplinas) - LENGTH(REPLACE(p_disciplinas, ',', '')) + 1
+                               ) n;
+    DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = TRUE;
+
+    -- Insertar el nuevo plan
     INSERT INTO planes (nombre, descripcion, monto, creditos_total, activa)
     VALUES (p_nombre, p_descripcion, p_monto, p_creditos_total, TRUE);
+
+    SET v_id_plan = LAST_INSERT_ID();
+
+    -- Insertar disciplinas asociadas al plan
+    OPEN cur;
+
+    leer_loop: LOOP
+        FETCH cur INTO disciplina_id;
+        IF done THEN
+            LEAVE leer_loop;
+        END IF;
+
+        INSERT INTO planes_disciplinas (id_plan, id_disciplina)
+        VALUES (v_id_plan, disciplina_id);
+    END LOOP;
+
+    CLOSE cur;
 END$$
 
 CREATE DEFINER=`root`@`localhost` PROCEDURE `DeleteClass` (IN `p_id_clase` INT)   BEGIN
@@ -650,7 +681,8 @@ CREATE TABLE `planes` (
 
 INSERT INTO `planes` (`id_plan`, `nombre`, `descripcion`, `monto`, `creditos_total`, `activa`) VALUES
 (1, 'Plan 8c multidisciplina', 'Permite asistir dos veces por semana a dos disciplinas', 20000.00, 8, 1),
-(3, 'Crossfit Semanal', '6 creditos semanales para Crossfit', 26000.00, 24, 1);
+(3, 'Crossfit Semanal', '6 creditos semanales para Crossfit', 26000.00, 24, 1),
+(4, 'Plan Full', 'Acceso a todas las disciplinas', 25000.00, 24, 1);
 
 -- --------------------------------------------------------
 
@@ -669,7 +701,11 @@ CREATE TABLE `planes_disciplinas` (
 
 INSERT INTO `planes_disciplinas` (`id_plan`, `id_disciplina`) VALUES
 (1, 1),
-(1, 2);
+(1, 2),
+(4, 1),
+(4, 2),
+(4, 3),
+(4, 5);
 
 -- --------------------------------------------------------
 
@@ -834,7 +870,7 @@ ALTER TABLE `estados`
 -- AUTO_INCREMENT de la tabla `planes`
 --
 ALTER TABLE `planes`
-  MODIFY `id_plan` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
+  MODIFY `id_plan` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=5;
 
 --
 -- AUTO_INCREMENT de la tabla `roles`
