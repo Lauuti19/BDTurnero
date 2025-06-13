@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Servidor: 127.0.0.1
--- Tiempo de generación: 06-06-2025 a las 20:35:59
+-- Tiempo de generación: 13-06-2025 a las 22:27:36
 -- Versión del servidor: 10.4.32-MariaDB
 -- Versión de PHP: 8.2.12
 
@@ -63,6 +63,11 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `CreateDiscipline` (IN `p_nombre` VA
     VALUES (p_nombre, TRUE);
 END$$
 
+CREATE DEFINER=`root`@`localhost` PROCEDURE `CreateExercise` (IN `p_name` VARCHAR(100), IN `p_link` VARCHAR(255))   BEGIN
+    INSERT INTO ejercicios (nombre, link, activa)
+    VALUES (p_name, p_link, TRUE);
+END$$
+
 CREATE DEFINER=`root`@`localhost` PROCEDURE `CreatePlan` (IN `p_nombre` VARCHAR(100), IN `p_descripcion` TEXT, IN `p_monto` DECIMAL(10,2), IN `p_creditos_total` INT, IN `p_disciplinas` TEXT)   BEGIN
     DECLARE v_id_plan INT;
     DECLARE done INT DEFAULT FALSE;
@@ -99,6 +104,62 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `CreatePlan` (IN `p_nombre` VARCHAR(
     CLOSE cur;
 END$$
 
+CREATE DEFINER=`root`@`localhost` PROCEDURE `CreateUserRoutineWithExercises` (IN `p_id_usuario` INT, IN `p_nombre_rutina` VARCHAR(100), IN `p_ejercicios` TEXT)   BEGIN
+    DECLARE v_id_rutina INT;
+    DECLARE done INT DEFAULT FALSE;
+
+    DECLARE v_id_ejercicio INT;
+    DECLARE v_dia TINYINT;
+    DECLARE v_orden INT;
+    DECLARE v_rondas INT;
+    DECLARE v_repeticiones VARCHAR(50);
+
+    DECLARE cur CURSOR FOR
+        SELECT 
+            CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(e, ',', 1), ',', -1) AS UNSIGNED),
+            CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(e, ',', 2), ',', -1) AS UNSIGNED),
+            CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(e, ',', 3), ',', -1) AS UNSIGNED),
+            CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(e, ',', 4), ',', -1) AS UNSIGNED),
+            SUBSTRING_INDEX(SUBSTRING_INDEX(e, ',', 5), ',', -1)
+        FROM (
+            SELECT TRIM(SUBSTRING_INDEX(SUBSTRING_INDEX(p_ejercicios, ';', numbers.n), ';', -1)) AS e
+            FROM (
+                SELECT a.N + b.N * 10 + 1 AS n
+                FROM (SELECT 0 AS N UNION SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4
+                      UNION SELECT 5 UNION SELECT 6 UNION SELECT 7 UNION SELECT 8 UNION SELECT 9) a,
+                     (SELECT 0 AS N UNION SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4
+                      UNION SELECT 5 UNION SELECT 6 UNION SELECT 7 UNION SELECT 8 UNION SELECT 9) b
+                WHERE a.N + b.N * 10 + 1 <= LENGTH(p_ejercicios) - LENGTH(REPLACE(p_ejercicios, ';', '')) + 1
+            ) numbers
+        ) parsed;
+
+    DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = TRUE;
+
+    -- Crear la rutina
+    INSERT INTO rutina (id_usuario, nombre, activa)
+    VALUES (p_id_usuario, p_nombre_rutina, TRUE);
+
+    SET v_id_rutina = LAST_INSERT_ID();
+
+    -- Insertar ejercicios
+    OPEN cur;
+
+    read_loop: LOOP
+        FETCH cur INTO v_id_ejercicio, v_dia, v_orden, v_rondas, v_repeticiones;
+        IF done THEN
+            LEAVE read_loop;
+        END IF;
+
+        INSERT INTO rutina_ejercicios (
+            id_rutina, id_ejercicio, dia, orden, rondas, repeticiones
+        ) VALUES (
+            v_id_rutina, v_id_ejercicio, v_dia, v_orden, v_rondas, v_repeticiones
+        );
+    END LOOP;
+
+    CLOSE cur;
+END$$
+
 CREATE DEFINER=`root`@`localhost` PROCEDURE `DeleteClass` (IN `p_id_clase` INT)   BEGIN
     UPDATE clases
     SET activa = FALSE
@@ -111,6 +172,12 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `DeleteDisciplina` (IN `p_id_discipl
     WHERE id_disciplina = p_id_disciplina;
 END$$
 
+CREATE DEFINER=`root`@`localhost` PROCEDURE `DeleteExercise` (IN `p_id_ejercicio` INT)   BEGIN
+  UPDATE ejercicios
+  SET activa = FALSE
+  WHERE id_ejercicio = p_id_ejercicio;
+END$$
+
 CREATE DEFINER=`root`@`localhost` PROCEDURE `DeletePlan` (IN `p_id_plan` INT)   BEGIN
     -- Eliminar relaciones en planes_disciplinas
     DELETE FROM planes_disciplinas
@@ -120,6 +187,12 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `DeletePlan` (IN `p_id_plan` INT)   
     UPDATE planes
     SET activa = FALSE
     WHERE id_plan = p_id_plan;
+END$$
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `DeleteUserRoutine` (IN `p_id_rutina` INT)   BEGIN
+  UPDATE rutina
+  SET activa = FALSE
+  WHERE id_rutina = p_id_rutina;
 END$$
 
 CREATE DEFINER=`root`@`localhost` PROCEDURE `GetAllClasses` (IN `p_fecha` DATE)   BEGIN
@@ -144,6 +217,12 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `GetAllClasses` (IN `p_fecha` DATE) 
     GROUP BY 
         c.id_clase, c.id_disciplina, d.disciplina, 
         c.id_dia, di.dia, c.hora, c.capacidad_max;
+END$$
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `GetAllExercises` ()   BEGIN
+    SELECT id_ejercicio, nombre, link
+    FROM ejercicios
+    WHERE activa = TRUE;
 END$$
 
 CREATE DEFINER=`root`@`localhost` PROCEDURE `GetClassesByDay` (IN `p_id_dia` INT)   BEGIN
@@ -225,6 +304,48 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `GetPlanes` ()   BEGIN
     SELECT id_plan, nombre, descripcion, monto, creditos_total
     FROM planes
     WHERE activa = TRUE;
+END$$
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `GetRoutinesByUser` (IN `p_id_usuario` INT)   BEGIN
+  SELECT 
+    r.id_rutina,
+    r.nombre AS rutina_nombre,
+    re.dia,
+    re.orden,
+    re.rondas,
+    re.repeticiones,
+    e.id_ejercicio,
+    e.nombre AS ejercicio_nombre,
+    e.link
+  FROM rutina r
+  JOIN rutina_ejercicios re ON r.id_rutina = re.id_rutina
+  JOIN ejercicios e ON re.id_ejercicio = e.id_ejercicio
+  WHERE r.id_usuario = p_id_usuario
+    AND r.activa = TRUE
+    AND e.activa = TRUE
+  ORDER BY r.id_rutina, re.dia, re.orden;
+END$$
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `GetRoutinesByUserName` (IN `p_nombre_usuario` VARCHAR(100))   BEGIN
+  SELECT 
+    r.id_rutina,
+    r.nombre AS rutina_nombre,
+    u.nombre AS usuario,
+    re.dia,
+    re.orden,
+    re.rondas,
+    re.repeticiones,
+    e.id_ejercicio,
+    e.nombre AS ejercicio_nombre,
+    e.link
+  FROM rutina r
+  JOIN usuarios u ON r.id_usuario = u.id_usuario
+  JOIN rutina_ejercicios re ON r.id_rutina = re.id_rutina
+  JOIN ejercicios e ON re.id_ejercicio = e.id_ejercicio
+  WHERE u.nombre LIKE CONCAT('%', p_nombre_usuario, '%')
+    AND r.activa = TRUE
+    AND e.activa = TRUE
+  ORDER BY r.id_rutina, re.dia, re.orden;
 END$$
 
 CREATE DEFINER=`root`@`localhost` PROCEDURE `GetUserByEmail` (IN `p_email` VARCHAR(255))   BEGIN
@@ -382,6 +503,12 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `RegistrarCuotaPorNombre` (IN `p_nom
     );
 END$$
 
+CREATE DEFINER=`root`@`localhost` PROCEDURE `SearchExercisesByName` (IN `p_name` VARCHAR(100))   BEGIN
+    SELECT id_ejercicio, nombre, link
+    FROM ejercicios
+    WHERE activa = TRUE AND nombre LIKE CONCAT('%', p_name, '%');
+END$$
+
 CREATE DEFINER=`root`@`localhost` PROCEDURE `UnregisterFromClass` (IN `p_id_usuario` INT, IN `p_id_clase` INT, IN `p_fecha` DATE)   BEGIN
     DECLARE v_id_cuota INT;
     DECLARE v_estado_usuario INT;
@@ -442,6 +569,14 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `UpdateClasses` (IN `p_id_clase` INT
     WHERE id_clase = p_id_clase;
 END$$
 
+CREATE DEFINER=`root`@`localhost` PROCEDURE `UpdateExercise` (IN `p_id_ejercicio` INT, IN `p_nombre` VARCHAR(100), IN `p_link` VARCHAR(255))   BEGIN
+  UPDATE ejercicios
+  SET
+    nombre = COALESCE(p_nombre, nombre),
+    link = COALESCE(p_link, link)
+  WHERE id_ejercicio = p_id_ejercicio;
+END$$
+
 CREATE DEFINER=`root`@`localhost` PROCEDURE `UpdatePassword` (IN `p_id_usuario` INT, IN `p_password_hash` VARCHAR(255))   BEGIN
   UPDATE usuarios
   SET password = p_password_hash
@@ -470,6 +605,63 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `UpdateUserInfo` (IN `p_id_usuario` 
         dni = COALESCE(p_dni, dni),
         celular = COALESCE(p_celular, celular)
     WHERE id_usuario = p_id_usuario;
+END$$
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `UpdateUserRoutine` (IN `p_id_rutina` INT, IN `p_nombre_rutina` VARCHAR(100), IN `p_ejercicios` TEXT)   BEGIN
+  DECLARE done INT DEFAULT FALSE;
+  DECLARE v_id_ejercicio INT;
+  DECLARE v_dia TINYINT;
+  DECLARE v_orden INT;
+  DECLARE v_rondas INT;
+  DECLARE v_repeticiones VARCHAR(50);
+
+  DECLARE cur CURSOR FOR
+    SELECT 
+      CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(e, ',', 1), ',', -1) AS UNSIGNED),
+      CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(e, ',', 2), ',', -1) AS UNSIGNED),
+      CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(e, ',', 3), ',', -1) AS UNSIGNED),
+      CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(e, ',', 4), ',', -1) AS UNSIGNED),
+      SUBSTRING_INDEX(SUBSTRING_INDEX(e, ',', 5), ',', -1)
+    FROM (
+      SELECT TRIM(SUBSTRING_INDEX(SUBSTRING_INDEX(p_ejercicios, ';', numbers.n), ';', -1)) AS e
+      FROM (
+        SELECT a.N + b.N * 10 + 1 AS n
+        FROM (SELECT 0 AS N UNION SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4
+              UNION SELECT 5 UNION SELECT 6 UNION SELECT 7 UNION SELECT 8 UNION SELECT 9) a,
+             (SELECT 0 AS N UNION SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4
+              UNION SELECT 5 UNION SELECT 6 UNION SELECT 7 UNION SELECT 8 UNION SELECT 9) b
+        WHERE a.N + b.N * 10 + 1 <= LENGTH(p_ejercicios) - LENGTH(REPLACE(p_ejercicios, ';', '')) + 1
+      ) numbers
+    ) parsed;
+
+  DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = TRUE;
+
+  -- Solo actualiza el nombre si se envía un valor no nulo
+  IF p_nombre_rutina IS NOT NULL THEN
+    UPDATE rutina
+    SET nombre = p_nombre_rutina
+    WHERE id_rutina = p_id_rutina;
+  END IF;
+
+  -- Si se envían ejercicios, reemplazar los existentes
+  IF p_ejercicios IS NOT NULL AND p_ejercicios != '' THEN
+    DELETE FROM rutina_ejercicios WHERE id_rutina = p_id_rutina;
+
+    OPEN cur;
+    read_loop: LOOP
+      FETCH cur INTO v_id_ejercicio, v_dia, v_orden, v_rondas, v_repeticiones;
+      IF done THEN
+        LEAVE read_loop;
+      END IF;
+
+      INSERT INTO rutina_ejercicios (
+        id_rutina, id_ejercicio, dia, orden, rondas, repeticiones
+      ) VALUES (
+        p_id_rutina, v_id_ejercicio, v_dia, v_orden, v_rondas, v_repeticiones
+      );
+    END LOOP;
+    CLOSE cur;
+  END IF;
 END$$
 
 DELIMITER ;
@@ -571,8 +763,7 @@ CREATE TABLE `cuotas` (
 --
 
 INSERT INTO `cuotas` (`id_cuota`, `id_usuario`, `id_plan`, `fecha_pago`, `fecha_vencimiento`, `estado_pago`, `creditos_total`, `creditos_disponibles`) VALUES
-(1, 4, 1, '2025-05-12', '2025-06-11', 'Paga', 8, 28),
-(2, 9, 1, '2025-05-26', '2025-06-26', 'Paga', 8, 8);
+(1, 4, 1, '2025-05-12', '2025-06-11', 'Paga', 8, 28);
 
 -- --------------------------------------------------------
 
@@ -644,6 +835,31 @@ INSERT INTO `disciplinas` (`id_disciplina`, `disciplina`, `activa`) VALUES
 (4, 'Open box', 1),
 (5, 'Levantamiento olímpico', 1),
 (6, 'Pilates', 1);
+
+-- --------------------------------------------------------
+
+--
+-- Estructura de tabla para la tabla `ejercicios`
+--
+
+CREATE TABLE `ejercicios` (
+  `id_ejercicio` int(11) NOT NULL,
+  `nombre` varchar(100) NOT NULL,
+  `link` varchar(255) DEFAULT NULL,
+  `activa` tinyint(1) DEFAULT 1
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+--
+-- Volcado de datos para la tabla `ejercicios`
+--
+
+INSERT INTO `ejercicios` (`id_ejercicio`, `nombre`, `link`, `activa`) VALUES
+(1, 'Sentadilla', '', 1),
+(2, 'Peso Rumano con Dumbbell', 'https://www.youtube.com/watch?v=xAL7lHwj30E', 1),
+(3, 'Hip Thrust', 'https://www.youtube.com/watch?v=RkgpqqpHHlE', 1),
+(4, 'Peso Rumano con Barra', 'https://youtu.be/aJbKyX6MDgM?si=ObshFeiRlPKAQ_36', 1),
+(5, 'Sentadilla Sumo', 'https://youtu.be/UkM1ZjH2HWA?si=AInMeuQzLEf9hHws', 1),
+(6, 'Extensiones de Cuadriceps', 'https://youtu.be/GEqOeRYV3Qs?si=-rKclBXUHhdrYuzd', 1);
 
 -- --------------------------------------------------------
 
@@ -731,6 +947,49 @@ INSERT INTO `roles` (`id_rol`, `rol`) VALUES
 -- --------------------------------------------------------
 
 --
+-- Estructura de tabla para la tabla `rutina`
+--
+
+CREATE TABLE `rutina` (
+  `id_rutina` int(11) NOT NULL,
+  `id_usuario` int(11) NOT NULL,
+  `activa` tinyint(1) DEFAULT 1,
+  `nombre` varchar(100) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+--
+-- Volcado de datos para la tabla `rutina`
+--
+
+INSERT INTO `rutina` (`id_rutina`, `id_usuario`, `activa`, `nombre`) VALUES
+(2, 4, 1, 'Piernas');
+
+-- --------------------------------------------------------
+
+--
+-- Estructura de tabla para la tabla `rutina_ejercicios`
+--
+
+CREATE TABLE `rutina_ejercicios` (
+  `id_rutina` int(11) NOT NULL,
+  `id_ejercicio` int(11) NOT NULL,
+  `dia` tinyint(4) NOT NULL,
+  `orden` int(11) DEFAULT 1,
+  `rondas` int(11) DEFAULT 1,
+  `repeticiones` varchar(50) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+--
+-- Volcado de datos para la tabla `rutina_ejercicios`
+--
+
+INSERT INTO `rutina_ejercicios` (`id_rutina`, `id_ejercicio`, `dia`, `orden`, `rondas`, `repeticiones`) VALUES
+(2, 3, 2, 1, 4, '10'),
+(2, 5, 2, 2, 3, '12');
+
+-- --------------------------------------------------------
+
+--
 -- Estructura de tabla para la tabla `usuarios`
 --
 
@@ -801,6 +1060,12 @@ ALTER TABLE `disciplinas`
   ADD PRIMARY KEY (`id_disciplina`);
 
 --
+-- Indices de la tabla `ejercicios`
+--
+ALTER TABLE `ejercicios`
+  ADD PRIMARY KEY (`id_ejercicio`);
+
+--
 -- Indices de la tabla `estados`
 --
 ALTER TABLE `estados`
@@ -824,6 +1089,20 @@ ALTER TABLE `planes_disciplinas`
 --
 ALTER TABLE `roles`
   ADD PRIMARY KEY (`id_rol`);
+
+--
+-- Indices de la tabla `rutina`
+--
+ALTER TABLE `rutina`
+  ADD PRIMARY KEY (`id_rutina`),
+  ADD KEY `id_usuario` (`id_usuario`);
+
+--
+-- Indices de la tabla `rutina_ejercicios`
+--
+ALTER TABLE `rutina_ejercicios`
+  ADD PRIMARY KEY (`id_rutina`,`id_ejercicio`,`dia`),
+  ADD KEY `id_ejercicio` (`id_ejercicio`);
 
 --
 -- Indices de la tabla `usuarios`
@@ -862,6 +1141,12 @@ ALTER TABLE `disciplinas`
   MODIFY `id_disciplina` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=7;
 
 --
+-- AUTO_INCREMENT de la tabla `ejercicios`
+--
+ALTER TABLE `ejercicios`
+  MODIFY `id_ejercicio` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=7;
+
+--
 -- AUTO_INCREMENT de la tabla `estados`
 --
 ALTER TABLE `estados`
@@ -878,6 +1163,12 @@ ALTER TABLE `planes`
 --
 ALTER TABLE `roles`
   MODIFY `id_rol` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
+
+--
+-- AUTO_INCREMENT de la tabla `rutina`
+--
+ALTER TABLE `rutina`
+  MODIFY `id_rutina` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
 
 --
 -- AUTO_INCREMENT de la tabla `usuarios`
@@ -922,6 +1213,19 @@ ALTER TABLE `datos_personales`
 ALTER TABLE `planes_disciplinas`
   ADD CONSTRAINT `planes_disciplinas_ibfk_1` FOREIGN KEY (`id_plan`) REFERENCES `planes` (`id_plan`),
   ADD CONSTRAINT `planes_disciplinas_ibfk_2` FOREIGN KEY (`id_disciplina`) REFERENCES `disciplinas` (`id_disciplina`);
+
+--
+-- Filtros para la tabla `rutina`
+--
+ALTER TABLE `rutina`
+  ADD CONSTRAINT `rutina_ibfk_1` FOREIGN KEY (`id_usuario`) REFERENCES `usuarios` (`id_usuario`);
+
+--
+-- Filtros para la tabla `rutina_ejercicios`
+--
+ALTER TABLE `rutina_ejercicios`
+  ADD CONSTRAINT `rutina_ejercicios_ibfk_1` FOREIGN KEY (`id_rutina`) REFERENCES `rutina` (`id_rutina`) ON DELETE CASCADE,
+  ADD CONSTRAINT `rutina_ejercicios_ibfk_2` FOREIGN KEY (`id_ejercicio`) REFERENCES `ejercicios` (`id_ejercicio`) ON DELETE CASCADE;
 
 --
 -- Filtros para la tabla `usuarios`
