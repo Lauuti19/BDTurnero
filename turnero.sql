@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Servidor: 127.0.0.1
--- Tiempo de generación: 13-06-2025 a las 22:27:36
+-- Tiempo de generación: 24-06-2025 a las 00:27:57
 -- Versión del servidor: 10.4.32-MariaDB
 -- Versión de PHP: 8.2.12
 
@@ -102,6 +102,34 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `CreatePlan` (IN `p_nombre` VARCHAR(
     END LOOP;
 
     CLOSE cur;
+END$$
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `CreateRM` (IN `p_id_usuario` INT, IN `p_id_ejercicio` INT, IN `p_peso` DECIMAL(10,2), IN `p_repeticiones` INT, IN `p_notas` TEXT)   BEGIN
+  -- Verificar si ya existe este RM específico
+  IF EXISTS (
+    SELECT 1 FROM ejercicios_usuarios_rm 
+    WHERE id_usuario = p_id_usuario 
+      AND id_ejercicio = p_id_ejercicio
+      AND repeticiones = p_repeticiones
+  ) THEN
+    SIGNAL SQLSTATE '45000' 
+    SET MESSAGE_TEXT = 'Ya existe un RM registrado para este usuario, ejercicio y número de repeticiones';
+  END IF;
+
+  -- Insertar el nuevo registro
+  INSERT INTO ejercicios_usuarios_rm (
+    id_usuario, 
+    id_ejercicio, 
+    peso, 
+    repeticiones, 
+    notas
+  ) VALUES (
+    p_id_usuario,
+    p_id_ejercicio,
+    p_peso,
+    p_repeticiones,
+    p_notas
+  );
 END$$
 
 CREATE DEFINER=`root`@`localhost` PROCEDURE `CreateUserRoutineWithExercises` (IN `p_id_usuario` INT, IN `p_nombre_rutina` VARCHAR(100), IN `p_ejercicios` TEXT)   BEGIN
@@ -306,6 +334,21 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `GetPlanes` ()   BEGIN
     WHERE activa = TRUE;
 END$$
 
+CREATE DEFINER=`root`@`localhost` PROCEDURE `GetRMsUsuario` (IN `p_id_usuario` INT)   BEGIN
+  SELECT 
+    rm.id_ejercicio,
+    e.nombre AS ejercicio,
+    rm.peso,
+    rm.repeticiones,
+    rm.fecha_actualizacion,
+    rm.notas
+  FROM ejercicios_usuarios_rm rm
+  JOIN ejercicios e ON rm.id_ejercicio = e.id_ejercicio
+  WHERE rm.id_usuario = p_id_usuario
+    AND e.activa = TRUE
+  ORDER BY e.nombre;
+END$$
+
 CREATE DEFINER=`root`@`localhost` PROCEDURE `GetRoutinesByUser` (IN `p_id_usuario` INT)   BEGIN
   SELECT 
     r.id_rutina,
@@ -355,6 +398,7 @@ END$$
 CREATE DEFINER=`root`@`localhost` PROCEDURE `GetUserFullInfo` (IN `p_id_usuario` INT)   BEGIN
     SELECT 
         u.id_usuario,
+        u.nombre,
         u.email,
         r.rol,
         dp.dni,
@@ -591,6 +635,29 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `UpdatePlan` (IN `p_id_plan` INT, IN
         monto = COALESCE(p_monto, monto),
         creditos_total = COALESCE(p_creditos_total, creditos_total)
     WHERE id_plan = p_id_plan;
+END$$
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `UpdateRM` (IN `p_id_usuario` INT, IN `p_id_ejercicio` INT, IN `p_repeticiones` INT, IN `p_nuevo_peso` DECIMAL(10,2), IN `p_nuevas_notas` TEXT)   BEGIN
+  -- Verificar si existe el registro
+  IF NOT EXISTS (
+    SELECT 1 FROM ejercicios_usuarios_rm 
+    WHERE id_usuario = p_id_usuario 
+      AND id_ejercicio = p_id_ejercicio
+      AND repeticiones = p_repeticiones
+  ) THEN
+    SIGNAL SQLSTATE '45000' 
+    SET MESSAGE_TEXT = 'No existe un RM registrado para esta combinación de usuario, ejercicio y repeticiones';
+  END IF;
+
+  -- Actualizar el registro existente
+  UPDATE ejercicios_usuarios_rm
+  SET 
+    peso = COALESCE(p_nuevo_peso, peso),
+    notas = COALESCE(p_nuevas_notas, notas),
+    fecha_actualizacion = CURRENT_TIMESTAMP
+  WHERE id_usuario = p_id_usuario
+    AND id_ejercicio = p_id_ejercicio
+    AND repeticiones = p_repeticiones;
 END$$
 
 CREATE DEFINER=`root`@`localhost` PROCEDURE `UpdateUserInfo` (IN `p_id_usuario` INT, IN `p_nombre` VARCHAR(100), IN `p_email` VARCHAR(100), IN `p_dni` VARCHAR(20), IN `p_celular` VARCHAR(20))   BEGIN
@@ -864,6 +931,28 @@ INSERT INTO `ejercicios` (`id_ejercicio`, `nombre`, `link`, `activa`) VALUES
 -- --------------------------------------------------------
 
 --
+-- Estructura de tabla para la tabla `ejercicios_usuarios_rm`
+--
+
+CREATE TABLE `ejercicios_usuarios_rm` (
+  `id_usuario` int(11) NOT NULL,
+  `id_ejercicio` int(11) NOT NULL,
+  `peso` decimal(10,2) DEFAULT NULL COMMENT 'Peso máximo en kg',
+  `repeticiones` int(11) NOT NULL,
+  `fecha_actualizacion` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  `notas` text DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+--
+-- Volcado de datos para la tabla `ejercicios_usuarios_rm`
+--
+
+INSERT INTO `ejercicios_usuarios_rm` (`id_usuario`, `id_ejercicio`, `peso`, `repeticiones`, `fecha_actualizacion`, `notas`) VALUES
+(4, 1, 85.00, 1, '2025-06-23 22:26:10', '');
+
+-- --------------------------------------------------------
+
+--
 -- Estructura de tabla para la tabla `estados`
 --
 
@@ -1066,6 +1155,13 @@ ALTER TABLE `ejercicios`
   ADD PRIMARY KEY (`id_ejercicio`);
 
 --
+-- Indices de la tabla `ejercicios_usuarios_rm`
+--
+ALTER TABLE `ejercicios_usuarios_rm`
+  ADD PRIMARY KEY (`id_usuario`,`id_ejercicio`,`repeticiones`),
+  ADD KEY `id_ejercicio` (`id_ejercicio`);
+
+--
 -- Indices de la tabla `estados`
 --
 ALTER TABLE `estados`
@@ -1206,6 +1302,13 @@ ALTER TABLE `cuotas`
 --
 ALTER TABLE `datos_personales`
   ADD CONSTRAINT `datos_personales_ibfk_1` FOREIGN KEY (`id_usuario`) REFERENCES `usuarios` (`id_usuario`);
+
+--
+-- Filtros para la tabla `ejercicios_usuarios_rm`
+--
+ALTER TABLE `ejercicios_usuarios_rm`
+  ADD CONSTRAINT `ejercicios_usuarios_rm_ibfk_1` FOREIGN KEY (`id_usuario`) REFERENCES `usuarios` (`id_usuario`),
+  ADD CONSTRAINT `ejercicios_usuarios_rm_ibfk_2` FOREIGN KEY (`id_ejercicio`) REFERENCES `ejercicios` (`id_ejercicio`);
 
 --
 -- Filtros para la tabla `planes_disciplinas`
