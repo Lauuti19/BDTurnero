@@ -4,6 +4,7 @@ services:
   db:
     image: mysql:latest
     container_name: mysql-db
+    restart: always
     ports:
       - "3306:3306"
     environment:
@@ -16,9 +17,21 @@ services:
     networks:
       - turnero-network
 
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin
+    container_name: turnero-phpmyadmin
+    restart: always
+    ports:
+      - "8082:80"
+    environment:
+      PMA_USER: root
+    depends_on:
+      - db
+    networks:
+      - turnero-network
+
 volumes:
   db_data:
-
 networks:
   turnero-network:
     external: true
