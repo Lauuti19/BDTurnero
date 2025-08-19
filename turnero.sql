@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Servidor: db
--- Tiempo de generación: 19-08-2025 a las 02:27:11
+-- Tiempo de generación: 19-08-2025 a las 15:00:57
 -- Versión del servidor: 9.3.0
 -- Versión de PHP: 8.2.27
 
@@ -303,6 +303,20 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `GetAllExercises` ()   BEGIN
     WHERE activa = TRUE;
 END$$
 
+CREATE DEFINER=`root`@`%` PROCEDURE `GetCashEfectivoDisponible` ()   BEGIN
+  SELECT
+    COALESCE(
+      SUM(
+        CASE
+          WHEN metodo_pago = 'efectivo' AND tipo = 'ingreso' THEN monto
+          WHEN metodo_pago = 'efectivo' AND tipo = 'egreso' THEN -monto
+          ELSE 0
+        END
+      ), 0
+    ) AS efectivo_disponible
+  FROM caja_movimientos;
+END$$
+
 CREATE DEFINER=`root`@`%` PROCEDURE `GetCashMovementsByDateRange` (IN `start_date` DATE, IN `end_date` DATE)   BEGIN
     SELECT 
         m.id_movimiento AS movement_id,
@@ -325,6 +339,16 @@ CREATE DEFINER=`root`@`%` PROCEDURE `GetCashMovementsByDateRange` (IN `start_dat
     LEFT JOIN usuarios u ON m.id_usuario = u.id_usuario
     WHERE DATE(m.fecha) BETWEEN start_date AND end_date
     ORDER BY m.fecha DESC;
+END$$
+
+CREATE DEFINER=`root`@`%` PROCEDURE `GetCashSummaryByPaymentMethod` ()   BEGIN
+  SELECT
+    metodo_pago,
+    SUM(CASE WHEN tipo = 'ingreso' THEN monto ELSE 0 END) AS total_ingresos,
+    SUM(CASE WHEN tipo = 'egreso' THEN monto ELSE 0 END) AS total_egresos,
+    SUM(CASE WHEN tipo = 'ingreso' THEN monto ELSE -monto END) AS balance
+  FROM caja_movimientos
+  GROUP BY metodo_pago;
 END$$
 
 CREATE DEFINER=`root`@`localhost` PROCEDURE `GetClassesByDay` (IN `p_id_dia` INT)   BEGIN
@@ -482,6 +506,15 @@ CREATE DEFINER=`root`@`%` PROCEDURE `GetTodayCashMovements` ()   BEGIN
     LEFT JOIN usuarios u ON m.id_usuario = u.id_usuario
     WHERE DATE(m.fecha) = CURDATE()
     ORDER BY m.fecha DESC;
+END$$
+
+CREATE DEFINER=`root`@`%` PROCEDURE `GetTodayCashSummary` ()   BEGIN
+  SELECT
+    COALESCE(SUM(CASE WHEN tipo='ingreso' THEN monto ELSE 0 END), 0) AS total_ingresos,
+    COALESCE(SUM(CASE WHEN tipo='egreso' THEN monto ELSE 0 END), 0) AS total_egresos,
+    COALESCE(SUM(CASE WHEN tipo='ingreso' THEN monto ELSE -monto END), 0) AS saldo_dia
+  FROM caja_movimientos
+  WHERE DATE(fecha) = CURDATE();
 END$$
 
 CREATE DEFINER=`root`@`localhost` PROCEDURE `GetUserByEmail` (IN `p_email` VARCHAR(255))   BEGIN
@@ -987,7 +1020,9 @@ INSERT INTO `caja_detalle` (`id_detalle`, `id_movimiento`, `id_producto`, `canti
 (9, 9, 1, 1, 15000.00),
 (10, 9, 2, 1, 2000.00),
 (11, 10, 1, 1, 15000.00),
-(12, 10, 2, 1, 2000.00);
+(12, 10, 2, 1, 2000.00),
+(13, 11, 1, 1, 15000.00),
+(14, 11, 2, 1, 2000.00);
 
 --
 -- Disparadores `caja_detalle`
@@ -1152,7 +1187,8 @@ INSERT INTO `caja_movimientos` (`id_movimiento`, `fecha`, `tipo`, `concepto`, `m
 (6, '2025-08-19 01:52:11', 'ingreso', 'Compra kiosco', 'efectivo', 0.00, 1, 6, NULL),
 (7, '2025-08-19 01:52:24', 'ingreso', 'Compra kiosco', 'efectivo', 32000.00, 1, 6, NULL),
 (9, '2025-08-19 02:25:18', 'ingreso', 'Venta de productos', 'efectivo', 17000.00, 1, 6, NULL),
-(10, '2025-08-19 02:25:24', 'ingreso', 'Venta de productos', 'efectivo', 17000.00, 1, 6, NULL);
+(10, '2025-08-19 02:25:24', 'ingreso', 'Venta de productos', 'efectivo', 17000.00, 1, 6, NULL),
+(11, '2025-08-19 14:54:50', 'ingreso', 'Venta de productos', 'efectivo', 17000.00, 1, 6, NULL);
 
 -- --------------------------------------------------------
 
@@ -1486,8 +1522,8 @@ CREATE TABLE `productos` (
 --
 
 INSERT INTO `productos` (`id_producto`, `nombre`, `descripcion`, `precio`, `stock`) VALUES
-(1, 'Proteína Whey', 'Suplemento de proteína en polvo', 15000.00, 14),
-(2, 'Powerade Frutos Rojos', 'Bebida isotónica', 2000.00, 17);
+(1, 'Proteína Whey', 'Suplemento de proteína en polvo', 15000.00, 13),
+(2, 'Powerade Frutos Rojos', 'Bebida isotónica', 2000.00, 16);
 
 -- --------------------------------------------------------
 
@@ -1741,13 +1777,13 @@ ALTER TABLE `asistencia_profes`
 -- AUTO_INCREMENT de la tabla `caja_detalle`
 --
 ALTER TABLE `caja_detalle`
-  MODIFY `id_detalle` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=13;
+  MODIFY `id_detalle` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=15;
 
 --
 -- AUTO_INCREMENT de la tabla `caja_movimientos`
 --
 ALTER TABLE `caja_movimientos`
-  MODIFY `id_movimiento` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=11;
+  MODIFY `id_movimiento` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=12;
 
 --
 -- AUTO_INCREMENT de la tabla `clases`
