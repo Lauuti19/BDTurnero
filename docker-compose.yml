@@ -16,6 +16,21 @@ services:
     networks:
       - turnero-network
 
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin:latest
+    container_name: phpmyadmin_turnero
+    restart: always
+    environment:
+      PMA_HOST: db
+      PMA_USER: root
+      PMA_PASSWORD: ""
+    ports:
+      - "8080:80"
+    depends_on:
+      - db
+    networks:
+      - turnero-network
+
 volumes:
   db_data:
 

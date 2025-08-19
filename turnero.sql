@@ -1,11 +1,11 @@
 -- phpMyAdmin SQL Dump
--- version 5.2.1
+-- version 5.2.2
 -- https://www.phpmyadmin.net/
 --
--- Servidor: 127.0.0.1
--- Tiempo de generación: 24-06-2025 a las 00:27:57
--- Versión del servidor: 10.4.32-MariaDB
--- Versión de PHP: 8.2.12
+-- Servidor: db
+-- Tiempo de generación: 19-08-2025 a las 15:00:57
+-- Versión del servidor: 9.3.0
+-- Versión de PHP: 8.2.27
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
 START TRANSACTION;
@@ -102,6 +102,11 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `CreatePlan` (IN `p_nombre` VARCHAR(
     END LOOP;
 
     CLOSE cur;
+END$$
+
+CREATE DEFINER=`root`@`%` PROCEDURE `CreateProduct` (IN `p_nombre` VARCHAR(100), IN `p_descripcion` TEXT, IN `p_precio` DECIMAL(10,2), IN `p_stock` INT)   BEGIN
+    INSERT INTO productos (nombre, descripcion, precio, stock)
+    VALUES (p_nombre, p_descripcion, p_precio, p_stock);
 END$$
 
 CREATE DEFINER=`root`@`localhost` PROCEDURE `CreateRM` (IN `p_id_usuario` INT, IN `p_id_ejercicio` INT, IN `p_peso` DECIMAL(10,2), IN `p_repeticiones` INT, IN `p_notas` TEXT)   BEGIN
@@ -217,10 +222,55 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `DeletePlan` (IN `p_id_plan` INT)   
     WHERE id_plan = p_id_plan;
 END$$
 
+CREATE DEFINER=`root`@`%` PROCEDURE `DeleteProduct` (IN `p_id_producto` INT)   BEGIN
+    DELETE FROM productos
+    WHERE id_producto = p_id_producto;
+END$$
+
 CREATE DEFINER=`root`@`localhost` PROCEDURE `DeleteUserRoutine` (IN `p_id_rutina` INT)   BEGIN
   UPDATE rutina
   SET activa = FALSE
   WHERE id_rutina = p_id_rutina;
+END$$
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `GetActiveFees` (IN `p_id_usuario` INT, IN `p_current_date` DATE)   BEGIN
+    SELECT 
+        c.id_cuota,
+        c.id_plan,
+        c.fecha_pago,
+        c.fecha_vencimiento,
+        c.estado_pago,
+        c.creditos_total,
+        c.creditos_disponibles,
+        p.nombre AS plan_nombre,
+        p.monto   AS plan_monto
+    FROM cuotas c
+    JOIN planes p ON c.id_plan = p.id_plan
+    WHERE c.id_usuario = p_id_usuario
+      AND c.fecha_vencimiento >= p_current_date;
+END$$
+
+CREATE DEFINER=`root`@`%` PROCEDURE `GetAllCashMovements` ()   BEGIN
+    SELECT 
+        m.id_movimiento AS movement_id,
+        m.fecha AS date,
+        m.tipo AS type,
+        m.concepto AS concept,
+        m.metodo_pago AS payment_method,
+        m.monto AS total_amount,
+        m.pagado AS paid,
+        m.id_usuario AS user_id,
+        u.nombre AS user_name,  
+        m.id_cuota AS fee_id,
+        d.id_detalle AS detail_id,
+        d.id_producto AS product_id,
+        d.cantidad AS quantity,
+        d.precio_unitario AS unit_price,
+        d.monto AS detail_amount
+    FROM caja_movimientos m
+    LEFT JOIN caja_detalle d ON m.id_movimiento = d.id_movimiento
+    LEFT JOIN usuarios u ON m.id_usuario = u.id_usuario
+    ORDER BY m.fecha DESC;
 END$$
 
 CREATE DEFINER=`root`@`localhost` PROCEDURE `GetAllClasses` (IN `p_fecha` DATE)   BEGIN
@@ -251,6 +301,54 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `GetAllExercises` ()   BEGIN
     SELECT id_ejercicio, nombre, link
     FROM ejercicios
     WHERE activa = TRUE;
+END$$
+
+CREATE DEFINER=`root`@`%` PROCEDURE `GetCashEfectivoDisponible` ()   BEGIN
+  SELECT
+    COALESCE(
+      SUM(
+        CASE
+          WHEN metodo_pago = 'efectivo' AND tipo = 'ingreso' THEN monto
+          WHEN metodo_pago = 'efectivo' AND tipo = 'egreso' THEN -monto
+          ELSE 0
+        END
+      ), 0
+    ) AS efectivo_disponible
+  FROM caja_movimientos;
+END$$
+
+CREATE DEFINER=`root`@`%` PROCEDURE `GetCashMovementsByDateRange` (IN `start_date` DATE, IN `end_date` DATE)   BEGIN
+    SELECT 
+        m.id_movimiento AS movement_id,
+        m.fecha AS date,
+        m.tipo AS type,
+        m.concepto AS concept,
+        m.metodo_pago AS payment_method,
+        m.monto AS total_amount,
+        m.pagado AS paid,
+        m.id_usuario AS user_id,
+        u.nombre AS user_name,  
+        m.id_cuota AS fee_id,
+        d.id_detalle AS detail_id,
+        d.id_producto AS product_id,
+        d.cantidad AS quantity,
+        d.precio_unitario AS unit_price,
+        d.monto AS detail_amount
+    FROM caja_movimientos m
+    LEFT JOIN caja_detalle d ON m.id_movimiento = d.id_movimiento
+    LEFT JOIN usuarios u ON m.id_usuario = u.id_usuario
+    WHERE DATE(m.fecha) BETWEEN start_date AND end_date
+    ORDER BY m.fecha DESC;
+END$$
+
+CREATE DEFINER=`root`@`%` PROCEDURE `GetCashSummaryByPaymentMethod` ()   BEGIN
+  SELECT
+    metodo_pago,
+    SUM(CASE WHEN tipo = 'ingreso' THEN monto ELSE 0 END) AS total_ingresos,
+    SUM(CASE WHEN tipo = 'egreso' THEN monto ELSE 0 END) AS total_egresos,
+    SUM(CASE WHEN tipo = 'ingreso' THEN monto ELSE -monto END) AS balance
+  FROM caja_movimientos
+  GROUP BY metodo_pago;
 END$$
 
 CREATE DEFINER=`root`@`localhost` PROCEDURE `GetClassesByDay` (IN `p_id_dia` INT)   BEGIN
@@ -319,19 +417,14 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `GetDisciplinas` ()   BEGIN
     WHERE activa = TRUE;
 END$$
 
-CREATE DEFINER=`root`@`localhost` PROCEDURE `GetInfoCuotas` (IN `n_id_usuario` INT)   BEGIN
-    SELECT
-      cuotas.id_usuario,
-      SUM(cuotas.creditos_disponibles) AS creditos_disponibles_totales
-    FROM cuotas
-    WHERE cuotas.id_usuario = n_id_usuario
-    GROUP BY cuotas.id_usuario;
-END$$
-
 CREATE DEFINER=`root`@`localhost` PROCEDURE `GetPlanes` ()   BEGIN
     SELECT id_plan, nombre, descripcion, monto, creditos_total
     FROM planes
     WHERE activa = TRUE;
+END$$
+
+CREATE DEFINER=`root`@`%` PROCEDURE `GetProducts` ()   BEGIN
+    SELECT * FROM productos;
 END$$
 
 CREATE DEFINER=`root`@`localhost` PROCEDURE `GetRMsUsuario` (IN `p_id_usuario` INT)   BEGIN
@@ -391,6 +484,39 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `GetRoutinesByUserName` (IN `p_nombr
   ORDER BY r.id_rutina, re.dia, re.orden;
 END$$
 
+CREATE DEFINER=`root`@`%` PROCEDURE `GetTodayCashMovements` ()   BEGIN
+    SELECT 
+        m.id_movimiento AS movement_id,
+        m.fecha AS date,
+        m.tipo AS type,
+        m.concepto AS concept,
+        m.metodo_pago AS payment_method,
+        m.monto AS total_amount,
+        m.pagado AS paid,
+        m.id_usuario AS user_id,
+        u.nombre AS user_name,  
+        m.id_cuota AS fee_id,
+        d.id_detalle AS detail_id,
+        d.id_producto AS product_id,
+        d.cantidad AS quantity,
+        d.precio_unitario AS unit_price,
+        d.monto AS detail_amount
+    FROM caja_movimientos m
+    LEFT JOIN caja_detalle d ON m.id_movimiento = d.id_movimiento
+    LEFT JOIN usuarios u ON m.id_usuario = u.id_usuario
+    WHERE DATE(m.fecha) = CURDATE()
+    ORDER BY m.fecha DESC;
+END$$
+
+CREATE DEFINER=`root`@`%` PROCEDURE `GetTodayCashSummary` ()   BEGIN
+  SELECT
+    COALESCE(SUM(CASE WHEN tipo='ingreso' THEN monto ELSE 0 END), 0) AS total_ingresos,
+    COALESCE(SUM(CASE WHEN tipo='egreso' THEN monto ELSE 0 END), 0) AS total_egresos,
+    COALESCE(SUM(CASE WHEN tipo='ingreso' THEN monto ELSE -monto END), 0) AS saldo_dia
+  FROM caja_movimientos
+  WHERE DATE(fecha) = CURDATE();
+END$$
+
 CREATE DEFINER=`root`@`localhost` PROCEDURE `GetUserByEmail` (IN `p_email` VARCHAR(255))   BEGIN
     SELECT * FROM usuarios WHERE email = p_email;
 END$$
@@ -433,6 +559,95 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `GetUsersByClassAndDate` (IN `p_clas
       AND cu.fecha = p_date;
 END$$
 
+CREATE DEFINER=`root`@`localhost` PROCEDURE `PayFee` (IN `p_id_cuota` INT, IN `p_metodo_pago` ENUM('efectivo','transferencia'))   BEGIN
+    DECLARE v_id_usuario INT;
+    DECLARE v_monto DECIMAL(10,2);
+    DECLARE v_exists_mov INT;
+
+    -- 1. Validar que exista la cuota y esté pendiente
+    SELECT c.id_usuario, p.monto
+    INTO v_id_usuario, v_monto
+    FROM cuotas c
+    JOIN planes p ON c.id_plan = p.id_plan
+    WHERE c.id_cuota = p_id_cuota
+      AND c.estado_pago = 'Pendiente'
+    LIMIT 1;
+
+    IF v_id_usuario IS NULL THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'La cuota no existe o ya está paga/vencida';
+    END IF;
+
+    -- 2. Marcar la cuota como paga
+    UPDATE cuotas
+    SET estado_pago = 'Paga',
+        fecha_pago = CURDATE()
+    WHERE id_cuota = p_id_cuota;
+
+    -- 3. Verificar si ya existe movimiento en caja
+    SELECT COUNT(*) INTO v_exists_mov
+    FROM caja_movimientos
+    WHERE id_cuota = p_id_cuota;
+
+    IF v_exists_mov > 0 THEN
+        -- Actualizar movimiento existente
+        UPDATE caja_movimientos
+        SET pagado = TRUE,
+            metodo_pago = p_metodo_pago
+        WHERE id_cuota = p_id_cuota;
+    ELSE
+        -- Insertar nuevo movimiento si falta
+        INSERT INTO caja_movimientos (
+            tipo, concepto, metodo_pago, monto, pagado, id_usuario, id_cuota
+        )
+        VALUES ('ingreso', 'cuota', p_metodo_pago, v_monto, TRUE, v_id_usuario, p_id_cuota);
+    END IF;
+END$$
+
+CREATE DEFINER=`root`@`%` PROCEDURE `RegisterCajaMovimiento` (IN `p_tipo` ENUM('Ingreso','Egreso'), IN `p_metodo_pago` ENUM('Efectivo','Tarjeta','Transferencia'), IN `p_id_usuario` INT, IN `p_concepto` VARCHAR(100), IN `p_detalles` JSON)   BEGIN
+    DECLARE v_id_movimiento INT;
+    DECLARE v_total DECIMAL(10,2) DEFAULT 0;
+    DECLARE v_index INT DEFAULT 0;
+    DECLARE v_length INT;
+    DECLARE v_id_producto INT;
+    DECLARE v_cantidad INT;
+    DECLARE v_precio DECIMAL(10,2);
+
+    -- Insertamos cabecera con monto = 0 (se actualiza después)
+    INSERT INTO caja_movimientos (fecha, tipo, concepto, metodo_pago, monto, pagado, id_usuario, id_cuota)
+    VALUES (NOW(), p_tipo, p_concepto, p_metodo_pago, 0, 1, p_id_usuario, NULL);
+
+    SET v_id_movimiento = LAST_INSERT_ID();
+
+    -- Cantidad de ítems en el JSON
+    SET v_length = JSON_LENGTH(p_detalles);
+
+    -- Iteramos sobre los detalles
+    WHILE v_index < v_length DO
+        SET v_id_producto = JSON_UNQUOTE(JSON_EXTRACT(p_detalles, CONCAT('$[', v_index, '].id_producto')));
+        SET v_cantidad    = JSON_UNQUOTE(JSON_EXTRACT(p_detalles, CONCAT('$[', v_index, '].cantidad')));
+
+        -- Buscar precio unitario desde productos
+        SELECT precio INTO v_precio
+        FROM productos
+        WHERE id_producto = v_id_producto;
+
+        -- Insertar detalle
+        INSERT INTO caja_detalle (id_movimiento, id_producto, cantidad, precio_unitario)
+        VALUES (v_id_movimiento, v_id_producto, v_cantidad, v_precio);
+
+        -- Acumular total
+        SET v_total = v_total + (v_precio * v_cantidad);
+
+        SET v_index = v_index + 1;
+    END WHILE;
+
+    -- Actualizar monto en cabecera
+    UPDATE caja_movimientos
+    SET monto = v_total
+    WHERE id_movimiento = v_id_movimiento;
+END$$
+
 CREATE DEFINER=`root`@`localhost` PROCEDURE `RegisterClient` (IN `p_email` VARCHAR(255), IN `p_password` VARCHAR(255), IN `p_nombre` VARCHAR(255), IN `p_dni` VARCHAR(20), IN `p_celular` VARCHAR(10))   BEGIN
     DECLARE new_user_id INT;
 
@@ -445,6 +660,56 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `RegisterClient` (IN `p_email` VARCH
 
     INSERT INTO datos_personales (id_usuario, dni, celular)
     VALUES (new_user_id, p_dni, p_celular);
+END$$
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `RegisterFee` (IN `p_id_usuario` INT, IN `p_id_plan` INT, IN `p_metodo_pago` ENUM('efectivo','transferencia'), IN `p_pagado` BOOLEAN)   BEGIN
+    DECLARE v_creditos INT;
+    DECLARE v_monto DECIMAL(10,2);
+    DECLARE v_id_cuota INT;
+    DECLARE v_estado ENUM('Paga','Pendiente','Vencida');
+
+    -- 0. Verificar si ya existe una cuota pendiente/activa
+    IF EXISTS (
+        SELECT 1
+        FROM cuotas
+        WHERE id_usuario = p_id_usuario
+          AND id_plan = p_id_plan
+          AND estado_pago IN ('Pendiente')
+          AND fecha_vencimiento >= CURDATE()
+    ) THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'El usuario ya tiene una cuota pendiente para este plan';
+    END IF;
+
+    -- 1. Obtener datos del plan
+    SELECT creditos_total, monto
+    INTO v_creditos, v_monto
+    FROM planes
+    WHERE id_plan = p_id_plan;
+
+    -- 2. Definir estado de la cuota
+    IF p_pagado THEN
+        SET v_estado = 'Paga';
+    ELSE
+        SET v_estado = 'Pendiente';
+    END IF;
+
+    -- 3. Insertar cuota
+    INSERT INTO cuotas (
+        id_usuario, id_plan, fecha_pago, fecha_vencimiento,
+        estado_pago, creditos_total, creditos_disponibles
+    )
+    VALUES (
+        p_id_usuario, p_id_plan, CURDATE(), DATE_ADD(CURDATE(), INTERVAL 1 MONTH),
+        v_estado, v_creditos, v_creditos
+    );
+
+    SET v_id_cuota = LAST_INSERT_ID();
+
+    -- 4. Registrar movimiento en caja
+    INSERT INTO caja_movimientos (tipo, concepto, metodo_pago, monto, pagado, id_usuario, id_cuota)
+    VALUES ('ingreso', 'cuota', p_metodo_pago, v_monto, p_pagado, p_id_usuario, v_id_cuota);
+
 END$$
 
 CREATE DEFINER=`root`@`localhost` PROCEDURE `RegisterToClass` (IN `p_id_usuario` INT, IN `p_id_clase` INT, IN `p_fecha` DATE)   BEGIN
@@ -513,38 +778,6 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `RegisterUser` (IN `p_email` VARCHAR
 
     INSERT INTO datos_personales (id_usuario, dni, celular)
     VALUES (new_user_id, p_dni, p_celular);
-END$$
-
-CREATE DEFINER=`root`@`localhost` PROCEDURE `RegistrarCuotaPorNombre` (IN `p_nombre_usuario` VARCHAR(100), IN `p_id_plan` INT, IN `p_fecha_pago` DATE)   BEGIN
-    DECLARE v_id_usuario INT;
-    DECLARE v_creditos_total INT DEFAULT 8;
-    DECLARE v_fecha_vencimiento DATE;
-
-    -- Busca el id_usuario por nombre exacto
-    SELECT id_usuario INTO v_id_usuario
-    FROM usuarios
-    WHERE nombre = p_nombre_usuario
-    LIMIT 1;
-
-    SET v_fecha_vencimiento = DATE_ADD(p_fecha_pago, INTERVAL 1 MONTH);
-
-    INSERT INTO cuotas (
-        id_usuario,
-        id_plan,
-        fecha_pago,
-        fecha_vencimiento,
-        estado_pago,
-        creditos_total,
-        creditos_disponibles
-    ) VALUES (
-        v_id_usuario,
-        p_id_plan,
-        p_fecha_pago,
-        v_fecha_vencimiento,
-        'Paga',
-        v_creditos_total,
-        v_creditos_total
-    );
 END$$
 
 CREATE DEFINER=`root`@`localhost` PROCEDURE `SearchExercisesByName` (IN `p_name` VARCHAR(100))   BEGIN
@@ -635,6 +868,16 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `UpdatePlan` (IN `p_id_plan` INT, IN
         monto = COALESCE(p_monto, monto),
         creditos_total = COALESCE(p_creditos_total, creditos_total)
     WHERE id_plan = p_id_plan;
+END$$
+
+CREATE DEFINER=`root`@`%` PROCEDURE `UpdateProduct` (IN `p_id_producto` INT, IN `p_nombre` VARCHAR(100), IN `p_descripcion` TEXT, IN `p_precio` DECIMAL(10,2), IN `p_stock` INT)   BEGIN
+    UPDATE productos
+    SET 
+        nombre = COALESCE(p_nombre, nombre),
+        descripcion = COALESCE(p_descripcion, descripcion),
+        precio = COALESCE(p_precio, precio),
+        stock = COALESCE(p_stock, stock)
+    WHERE id_producto = p_id_producto;
 END$$
 
 CREATE DEFINER=`root`@`localhost` PROCEDURE `UpdateRM` (IN `p_id_usuario` INT, IN `p_id_ejercicio` INT, IN `p_repeticiones` INT, IN `p_nuevo_peso` DECIMAL(10,2), IN `p_nuevas_notas` TEXT)   BEGIN
@@ -736,16 +979,230 @@ DELIMITER ;
 -- --------------------------------------------------------
 
 --
+-- Estructura de tabla para la tabla `asistencia_profes`
+--
+
+CREATE TABLE `asistencia_profes` (
+  `id_asistencia` int NOT NULL,
+  `id_usuario` int NOT NULL,
+  `fecha` date NOT NULL,
+  `check_in` time DEFAULT NULL,
+  `check_out` time DEFAULT NULL,
+  `horas_total` decimal(5,2) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Estructura de tabla para la tabla `caja_detalle`
+--
+
+CREATE TABLE `caja_detalle` (
+  `id_detalle` int NOT NULL,
+  `id_movimiento` int NOT NULL,
+  `id_producto` int NOT NULL,
+  `cantidad` int NOT NULL,
+  `precio_unitario` decimal(10,2) NOT NULL,
+  `monto` decimal(10,2) GENERATED ALWAYS AS ((`cantidad` * `precio_unitario`)) STORED
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+--
+-- Volcado de datos para la tabla `caja_detalle`
+--
+
+INSERT INTO `caja_detalle` (`id_detalle`, `id_movimiento`, `id_producto`, `cantidad`, `precio_unitario`) VALUES
+(1, 4, 1, 2, 15000.00),
+(3, 5, 1, 2, 15000.00),
+(4, 5, 2, 1, 2000.00),
+(5, 6, 1, 2, 15000.00),
+(7, 7, 1, 2, 15000.00),
+(8, 7, 2, 1, 2000.00),
+(9, 9, 1, 1, 15000.00),
+(10, 9, 2, 1, 2000.00),
+(11, 10, 1, 1, 15000.00),
+(12, 10, 2, 1, 2000.00),
+(13, 11, 1, 1, 15000.00),
+(14, 11, 2, 1, 2000.00);
+
+--
+-- Disparadores `caja_detalle`
+--
+DELIMITER $$
+CREATE TRIGGER `trg_check_stock_before_insert` BEFORE INSERT ON `caja_detalle` FOR EACH ROW BEGIN
+    DECLARE v_tipo ENUM('Ingreso','Egreso');
+    DECLARE v_stock_actual INT;
+
+    -- Obtenemos el tipo del movimiento
+    SELECT tipo INTO v_tipo
+    FROM caja_movimientos
+    WHERE id_movimiento = NEW.id_movimiento;
+
+    -- Si es Ingreso (venta), verificamos stock
+    IF v_tipo = 'Ingreso' THEN
+        SELECT stock INTO v_stock_actual
+        FROM productos
+        WHERE id_producto = NEW.id_producto;
+
+        IF v_stock_actual < NEW.cantidad THEN
+            SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Stock insuficiente para realizar la venta';
+        END IF;
+    END IF;
+END
+$$
+DELIMITER ;
+DELIMITER $$
+CREATE TRIGGER `trg_check_stock_before_update` BEFORE UPDATE ON `caja_detalle` FOR EACH ROW BEGIN
+    DECLARE v_tipo ENUM('Ingreso','Egreso');
+    DECLARE v_stock_actual INT;
+
+    SELECT tipo INTO v_tipo
+    FROM caja_movimientos
+    WHERE id_movimiento = NEW.id_movimiento;
+
+    IF v_tipo = 'Ingreso' THEN
+        SELECT stock INTO v_stock_actual
+        FROM productos
+        WHERE id_producto = NEW.id_producto;
+
+        -- Ajustamos stock considerando que ya había OLD.cantidad reservada
+        IF v_stock_actual + OLD.cantidad < NEW.cantidad THEN
+            SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Stock insuficiente para actualizar la venta';
+        END IF;
+    END IF;
+END
+$$
+DELIMITER ;
+DELIMITER $$
+CREATE TRIGGER `trg_update_stock_after_delete` AFTER DELETE ON `caja_detalle` FOR EACH ROW BEGIN
+    DECLARE v_tipo ENUM('Ingreso','Egreso');
+
+    SELECT tipo INTO v_tipo
+    FROM caja_movimientos
+    WHERE id_movimiento = OLD.id_movimiento;
+
+    -- Si era Ingreso (venta) => devolvemos stock
+    IF v_tipo = 'Ingreso' THEN
+        UPDATE productos
+        SET stock = stock + OLD.cantidad
+        WHERE id_producto = OLD.id_producto;
+    END IF;
+
+    -- Si era Egreso (compra/entrada) => quitamos stock
+    IF v_tipo = 'Egreso' THEN
+        UPDATE productos
+        SET stock = stock - OLD.cantidad
+        WHERE id_producto = OLD.id_producto;
+    END IF;
+END
+$$
+DELIMITER ;
+DELIMITER $$
+CREATE TRIGGER `trg_update_stock_after_insert` AFTER INSERT ON `caja_detalle` FOR EACH ROW BEGIN
+    DECLARE v_tipo ENUM('Ingreso','Egreso');
+
+    -- Obtenemos el tipo del movimiento
+    SELECT tipo INTO v_tipo
+    FROM caja_movimientos
+    WHERE id_movimiento = NEW.id_movimiento;
+
+    -- Si es Ingreso (venta) => restar stock
+    IF v_tipo = 'Ingreso' THEN
+        UPDATE productos
+        SET stock = stock - NEW.cantidad
+        WHERE id_producto = NEW.id_producto;
+    END IF;
+
+    -- Si es Egreso (compra/entrada) => sumar stock
+    IF v_tipo = 'Egreso' THEN
+        UPDATE productos
+        SET stock = stock + NEW.cantidad
+        WHERE id_producto = NEW.id_producto;
+    END IF;
+END
+$$
+DELIMITER ;
+DELIMITER $$
+CREATE TRIGGER `trg_update_stock_after_update` AFTER UPDATE ON `caja_detalle` FOR EACH ROW BEGIN
+    DECLARE v_tipo ENUM('Ingreso','Egreso');
+
+    SELECT tipo INTO v_tipo
+    FROM caja_movimientos
+    WHERE id_movimiento = NEW.id_movimiento;
+
+    -- Revertimos la cantidad anterior
+    IF v_tipo = 'Ingreso' THEN
+        UPDATE productos
+        SET stock = stock + OLD.cantidad
+        WHERE id_producto = OLD.id_producto;
+    ELSEIF v_tipo = 'Egreso' THEN
+        UPDATE productos
+        SET stock = stock - OLD.cantidad
+        WHERE id_producto = OLD.id_producto;
+    END IF;
+
+    -- Aplicamos la nueva cantidad
+    IF v_tipo = 'Ingreso' THEN
+        UPDATE productos
+        SET stock = stock - NEW.cantidad
+        WHERE id_producto = NEW.id_producto;
+    ELSEIF v_tipo = 'Egreso' THEN
+        UPDATE productos
+        SET stock = stock + NEW.cantidad
+        WHERE id_producto = NEW.id_producto;
+    END IF;
+END
+$$
+DELIMITER ;
+
+-- --------------------------------------------------------
+
+--
+-- Estructura de tabla para la tabla `caja_movimientos`
+--
+
+CREATE TABLE `caja_movimientos` (
+  `id_movimiento` int NOT NULL,
+  `fecha` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `tipo` enum('ingreso','egreso') COLLATE utf8mb4_general_ci NOT NULL,
+  `concepto` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,
+  `metodo_pago` enum('efectivo','transferencia') COLLATE utf8mb4_general_ci NOT NULL,
+  `monto` decimal(10,2) NOT NULL,
+  `pagado` tinyint(1) DEFAULT '1',
+  `id_usuario` int DEFAULT NULL,
+  `id_cuota` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+--
+-- Volcado de datos para la tabla `caja_movimientos`
+--
+
+INSERT INTO `caja_movimientos` (`id_movimiento`, `fecha`, `tipo`, `concepto`, `metodo_pago`, `monto`, `pagado`, `id_usuario`, `id_cuota`) VALUES
+(1, '2025-08-19 01:00:37', 'ingreso', 'cuota', 'efectivo', 26000.00, 1, 6, 4),
+(2, '2025-08-19 01:10:21', 'ingreso', 'cuota', 'efectivo', 25000.00, 1, 9, 5),
+(3, '2025-08-19 01:10:48', 'ingreso', 'cuota', 'efectivo', 20000.00, 1, 6, 6),
+(4, '2025-08-19 01:48:36', 'ingreso', 'Compra kiosco', 'efectivo', 0.00, 1, 6, NULL),
+(5, '2025-08-19 01:49:02', 'ingreso', 'Compra kiosco', 'efectivo', 32000.00, 1, 6, NULL),
+(6, '2025-08-19 01:52:11', 'ingreso', 'Compra kiosco', 'efectivo', 0.00, 1, 6, NULL),
+(7, '2025-08-19 01:52:24', 'ingreso', 'Compra kiosco', 'efectivo', 32000.00, 1, 6, NULL),
+(9, '2025-08-19 02:25:18', 'ingreso', 'Venta de productos', 'efectivo', 17000.00, 1, 6, NULL),
+(10, '2025-08-19 02:25:24', 'ingreso', 'Venta de productos', 'efectivo', 17000.00, 1, 6, NULL),
+(11, '2025-08-19 14:54:50', 'ingreso', 'Venta de productos', 'efectivo', 17000.00, 1, 6, NULL);
+
+-- --------------------------------------------------------
+
+--
 -- Estructura de tabla para la tabla `clases`
 --
 
 CREATE TABLE `clases` (
-  `id_clase` int(11) NOT NULL,
-  `id_disciplina` int(11) DEFAULT NULL,
-  `id_dia` int(11) DEFAULT NULL,
+  `id_clase` int NOT NULL,
+  `id_disciplina` int DEFAULT NULL,
+  `id_dia` int DEFAULT NULL,
   `hora` time DEFAULT NULL,
-  `capacidad_max` int(11) DEFAULT NULL,
-  `activa` tinyint(1) DEFAULT 1
+  `capacidad_max` int DEFAULT NULL,
+  `activa` tinyint(1) DEFAULT '1'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
@@ -792,8 +1249,8 @@ INSERT INTO `clases` (`id_clase`, `id_disciplina`, `id_dia`, `hora`, `capacidad_
 --
 
 CREATE TABLE `clases_usuarios` (
-  `id_clase` int(11) NOT NULL,
-  `id_usuario` int(11) NOT NULL,
+  `id_clase` int NOT NULL,
+  `id_usuario` int NOT NULL,
   `presente` tinyint(1) DEFAULT NULL,
   `fecha` date NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -815,14 +1272,14 @@ INSERT INTO `clases_usuarios` (`id_clase`, `id_usuario`, `presente`, `fecha`) VA
 --
 
 CREATE TABLE `cuotas` (
-  `id_cuota` int(11) NOT NULL,
-  `id_usuario` int(11) NOT NULL,
-  `id_plan` int(11) NOT NULL,
+  `id_cuota` int NOT NULL,
+  `id_usuario` int NOT NULL,
+  `id_plan` int NOT NULL,
   `fecha_pago` date DEFAULT NULL,
   `fecha_vencimiento` date DEFAULT NULL,
-  `estado_pago` enum('Paga','Pendiente','Vencida') DEFAULT 'Paga',
-  `creditos_total` int(11) NOT NULL,
-  `creditos_disponibles` int(11) NOT NULL
+  `estado_pago` enum('Paga','Pendiente','Vencida') COLLATE utf8mb4_general_ci DEFAULT 'Paga',
+  `creditos_total` int NOT NULL,
+  `creditos_disponibles` int NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
@@ -830,7 +1287,10 @@ CREATE TABLE `cuotas` (
 --
 
 INSERT INTO `cuotas` (`id_cuota`, `id_usuario`, `id_plan`, `fecha_pago`, `fecha_vencimiento`, `estado_pago`, `creditos_total`, `creditos_disponibles`) VALUES
-(1, 4, 1, '2025-05-12', '2025-06-11', 'Paga', 8, 28);
+(1, 4, 1, '2025-05-12', '2025-06-11', 'Paga', 8, 28),
+(4, 6, 3, '2025-08-19', '2025-09-19', 'Paga', 24, 24),
+(5, 9, 4, '2025-08-19', '2025-09-19', 'Paga', 24, 24),
+(6, 6, 1, '2025-08-19', '2025-09-19', 'Paga', 8, 8);
 
 -- --------------------------------------------------------
 
@@ -839,9 +1299,9 @@ INSERT INTO `cuotas` (`id_cuota`, `id_usuario`, `id_plan`, `fecha_pago`, `fecha_
 --
 
 CREATE TABLE `datos_personales` (
-  `id_usuario` int(11) NOT NULL,
-  `dni` varchar(20) DEFAULT NULL,
-  `celular` varchar(20) DEFAULT NULL
+  `id_usuario` int NOT NULL,
+  `dni` varchar(20) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `celular` varchar(20) COLLATE utf8mb4_general_ci DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
@@ -863,8 +1323,8 @@ INSERT INTO `datos_personales` (`id_usuario`, `dni`, `celular`) VALUES
 --
 
 CREATE TABLE `dias` (
-  `id_dia` int(11) NOT NULL,
-  `dia` varchar(20) DEFAULT NULL
+  `id_dia` int NOT NULL,
+  `dia` varchar(20) COLLATE utf8mb4_general_ci DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
@@ -886,9 +1346,9 @@ INSERT INTO `dias` (`id_dia`, `dia`) VALUES
 --
 
 CREATE TABLE `disciplinas` (
-  `id_disciplina` int(11) NOT NULL,
-  `disciplina` varchar(100) DEFAULT NULL,
-  `activa` tinyint(1) DEFAULT 1
+  `id_disciplina` int NOT NULL,
+  `disciplina` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `activa` tinyint(1) DEFAULT '1'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
@@ -910,10 +1370,10 @@ INSERT INTO `disciplinas` (`id_disciplina`, `disciplina`, `activa`) VALUES
 --
 
 CREATE TABLE `ejercicios` (
-  `id_ejercicio` int(11) NOT NULL,
-  `nombre` varchar(100) NOT NULL,
-  `link` varchar(255) DEFAULT NULL,
-  `activa` tinyint(1) DEFAULT 1
+  `id_ejercicio` int NOT NULL,
+  `nombre` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,
+  `link` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `activa` tinyint(1) DEFAULT '1'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
@@ -935,12 +1395,12 @@ INSERT INTO `ejercicios` (`id_ejercicio`, `nombre`, `link`, `activa`) VALUES
 --
 
 CREATE TABLE `ejercicios_usuarios_rm` (
-  `id_usuario` int(11) NOT NULL,
-  `id_ejercicio` int(11) NOT NULL,
+  `id_usuario` int NOT NULL,
+  `id_ejercicio` int NOT NULL,
   `peso` decimal(10,2) DEFAULT NULL COMMENT 'Peso máximo en kg',
-  `repeticiones` int(11) NOT NULL,
-  `fecha_actualizacion` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
-  `notas` text DEFAULT NULL
+  `repeticiones` int NOT NULL,
+  `fecha_actualizacion` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `notas` text COLLATE utf8mb4_general_ci
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
@@ -957,8 +1417,8 @@ INSERT INTO `ejercicios_usuarios_rm` (`id_usuario`, `id_ejercicio`, `peso`, `rep
 --
 
 CREATE TABLE `estados` (
-  `id_estado` int(11) NOT NULL,
-  `estado` varchar(50) DEFAULT NULL
+  `id_estado` int NOT NULL,
+  `estado` varchar(50) COLLATE utf8mb4_general_ci DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
@@ -973,16 +1433,46 @@ INSERT INTO `estados` (`id_estado`, `estado`) VALUES
 -- --------------------------------------------------------
 
 --
+-- Estructura de tabla para la tabla `horas_pactadas`
+--
+
+CREATE TABLE `horas_pactadas` (
+  `id_pactado` int NOT NULL,
+  `id_usuario` int NOT NULL,
+  `horas_pactadas` int NOT NULL,
+  `tarifa` decimal(10,2) NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Estructura de tabla para la tabla `liquidaciones_profes`
+--
+
+CREATE TABLE `liquidaciones_profes` (
+  `id_liquidacion` int NOT NULL,
+  `id_usuario` int NOT NULL,
+  `periodo` varchar(7) COLLATE utf8mb4_general_ci NOT NULL,
+  `horas_pactadas` int NOT NULL,
+  `horas_trabajadas` int NOT NULL,
+  `horas_pagadas` int NOT NULL,
+  `total` decimal(10,2) NOT NULL,
+  `fecha_liquidacion` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Estructura de tabla para la tabla `planes`
 --
 
 CREATE TABLE `planes` (
-  `id_plan` int(11) NOT NULL,
-  `nombre` varchar(100) NOT NULL,
-  `descripcion` text DEFAULT NULL,
+  `id_plan` int NOT NULL,
+  `nombre` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,
+  `descripcion` text COLLATE utf8mb4_general_ci,
   `monto` decimal(10,2) NOT NULL,
-  `creditos_total` int(11) NOT NULL,
-  `activa` tinyint(1) DEFAULT 1
+  `creditos_total` int NOT NULL,
+  `activa` tinyint(1) DEFAULT '1'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
@@ -1001,8 +1491,8 @@ INSERT INTO `planes` (`id_plan`, `nombre`, `descripcion`, `monto`, `creditos_tot
 --
 
 CREATE TABLE `planes_disciplinas` (
-  `id_plan` int(11) NOT NULL,
-  `id_disciplina` int(11) NOT NULL
+  `id_plan` int NOT NULL,
+  `id_disciplina` int NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
@@ -1016,12 +1506,34 @@ INSERT INTO `planes_disciplinas` (`id_plan`, `id_disciplina`) VALUES
 -- --------------------------------------------------------
 
 --
+-- Estructura de tabla para la tabla `productos`
+--
+
+CREATE TABLE `productos` (
+  `id_producto` int NOT NULL,
+  `nombre` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,
+  `descripcion` text COLLATE utf8mb4_general_ci,
+  `precio` decimal(10,2) NOT NULL,
+  `stock` int NOT NULL DEFAULT '0'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+--
+-- Volcado de datos para la tabla `productos`
+--
+
+INSERT INTO `productos` (`id_producto`, `nombre`, `descripcion`, `precio`, `stock`) VALUES
+(1, 'Proteína Whey', 'Suplemento de proteína en polvo', 15000.00, 13),
+(2, 'Powerade Frutos Rojos', 'Bebida isotónica', 2000.00, 16);
+
+-- --------------------------------------------------------
+
+--
 -- Estructura de tabla para la tabla `roles`
 --
 
 CREATE TABLE `roles` (
-  `id_rol` int(11) NOT NULL,
-  `rol` varchar(50) DEFAULT NULL
+  `id_rol` int NOT NULL,
+  `rol` varchar(50) COLLATE utf8mb4_general_ci DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
@@ -1040,10 +1552,10 @@ INSERT INTO `roles` (`id_rol`, `rol`) VALUES
 --
 
 CREATE TABLE `rutina` (
-  `id_rutina` int(11) NOT NULL,
-  `id_usuario` int(11) NOT NULL,
-  `activa` tinyint(1) DEFAULT 1,
-  `nombre` varchar(100) DEFAULT NULL
+  `id_rutina` int NOT NULL,
+  `id_usuario` int NOT NULL,
+  `activa` tinyint(1) DEFAULT '1',
+  `nombre` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
@@ -1060,12 +1572,12 @@ INSERT INTO `rutina` (`id_rutina`, `id_usuario`, `activa`, `nombre`) VALUES
 --
 
 CREATE TABLE `rutina_ejercicios` (
-  `id_rutina` int(11) NOT NULL,
-  `id_ejercicio` int(11) NOT NULL,
-  `dia` tinyint(4) NOT NULL,
-  `orden` int(11) DEFAULT 1,
-  `rondas` int(11) DEFAULT 1,
-  `repeticiones` varchar(50) DEFAULT NULL
+  `id_rutina` int NOT NULL,
+  `id_ejercicio` int NOT NULL,
+  `dia` tinyint NOT NULL,
+  `orden` int DEFAULT '1',
+  `rondas` int DEFAULT '1',
+  `repeticiones` varchar(50) COLLATE utf8mb4_general_ci DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
@@ -1083,12 +1595,12 @@ INSERT INTO `rutina_ejercicios` (`id_rutina`, `id_ejercicio`, `dia`, `orden`, `r
 --
 
 CREATE TABLE `usuarios` (
-  `id_usuario` int(11) NOT NULL,
-  `email` varchar(100) DEFAULT NULL,
-  `password` varchar(255) DEFAULT NULL,
-  `id_rol` int(11) DEFAULT NULL,
-  `nombre` varchar(100) DEFAULT NULL,
-  `id_estado` int(11) DEFAULT NULL
+  `id_usuario` int NOT NULL,
+  `email` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `password` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `id_rol` int DEFAULT NULL,
+  `nombre` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `id_estado` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
@@ -1106,6 +1618,29 @@ INSERT INTO `usuarios` (`id_usuario`, `email`, `password`, `id_rol`, `nombre`, `
 --
 -- Índices para tablas volcadas
 --
+
+--
+-- Indices de la tabla `asistencia_profes`
+--
+ALTER TABLE `asistencia_profes`
+  ADD PRIMARY KEY (`id_asistencia`),
+  ADD KEY `id_usuario` (`id_usuario`);
+
+--
+-- Indices de la tabla `caja_detalle`
+--
+ALTER TABLE `caja_detalle`
+  ADD PRIMARY KEY (`id_detalle`),
+  ADD KEY `id_movimiento` (`id_movimiento`),
+  ADD KEY `id_producto` (`id_producto`);
+
+--
+-- Indices de la tabla `caja_movimientos`
+--
+ALTER TABLE `caja_movimientos`
+  ADD PRIMARY KEY (`id_movimiento`),
+  ADD KEY `id_usuario` (`id_usuario`),
+  ADD KEY `id_cuota` (`id_cuota`);
 
 --
 -- Indices de la tabla `clases`
@@ -1168,6 +1703,20 @@ ALTER TABLE `estados`
   ADD PRIMARY KEY (`id_estado`);
 
 --
+-- Indices de la tabla `horas_pactadas`
+--
+ALTER TABLE `horas_pactadas`
+  ADD PRIMARY KEY (`id_pactado`),
+  ADD KEY `id_usuario` (`id_usuario`);
+
+--
+-- Indices de la tabla `liquidaciones_profes`
+--
+ALTER TABLE `liquidaciones_profes`
+  ADD PRIMARY KEY (`id_liquidacion`),
+  ADD KEY `id_usuario` (`id_usuario`);
+
+--
 -- Indices de la tabla `planes`
 --
 ALTER TABLE `planes`
@@ -1179,6 +1728,12 @@ ALTER TABLE `planes`
 ALTER TABLE `planes_disciplinas`
   ADD PRIMARY KEY (`id_plan`,`id_disciplina`),
   ADD KEY `id_disciplina` (`id_disciplina`);
+
+--
+-- Indices de la tabla `productos`
+--
+ALTER TABLE `productos`
+  ADD PRIMARY KEY (`id_producto`);
 
 --
 -- Indices de la tabla `roles`
@@ -1213,68 +1768,124 @@ ALTER TABLE `usuarios`
 --
 
 --
+-- AUTO_INCREMENT de la tabla `asistencia_profes`
+--
+ALTER TABLE `asistencia_profes`
+  MODIFY `id_asistencia` int NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT de la tabla `caja_detalle`
+--
+ALTER TABLE `caja_detalle`
+  MODIFY `id_detalle` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=15;
+
+--
+-- AUTO_INCREMENT de la tabla `caja_movimientos`
+--
+ALTER TABLE `caja_movimientos`
+  MODIFY `id_movimiento` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=12;
+
+--
 -- AUTO_INCREMENT de la tabla `clases`
 --
 ALTER TABLE `clases`
-  MODIFY `id_clase` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=32;
+  MODIFY `id_clase` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=32;
 
 --
 -- AUTO_INCREMENT de la tabla `cuotas`
 --
 ALTER TABLE `cuotas`
-  MODIFY `id_cuota` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
+  MODIFY `id_cuota` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=7;
 
 --
 -- AUTO_INCREMENT de la tabla `dias`
 --
 ALTER TABLE `dias`
-  MODIFY `id_dia` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=7;
+  MODIFY `id_dia` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=7;
 
 --
 -- AUTO_INCREMENT de la tabla `disciplinas`
 --
 ALTER TABLE `disciplinas`
-  MODIFY `id_disciplina` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=7;
+  MODIFY `id_disciplina` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=7;
 
 --
 -- AUTO_INCREMENT de la tabla `ejercicios`
 --
 ALTER TABLE `ejercicios`
-  MODIFY `id_ejercicio` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=7;
+  MODIFY `id_ejercicio` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=7;
 
 --
 -- AUTO_INCREMENT de la tabla `estados`
 --
 ALTER TABLE `estados`
-  MODIFY `id_estado` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
+  MODIFY `id_estado` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
+
+--
+-- AUTO_INCREMENT de la tabla `horas_pactadas`
+--
+ALTER TABLE `horas_pactadas`
+  MODIFY `id_pactado` int NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT de la tabla `liquidaciones_profes`
+--
+ALTER TABLE `liquidaciones_profes`
+  MODIFY `id_liquidacion` int NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT de la tabla `planes`
 --
 ALTER TABLE `planes`
-  MODIFY `id_plan` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=5;
+  MODIFY `id_plan` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=5;
+
+--
+-- AUTO_INCREMENT de la tabla `productos`
+--
+ALTER TABLE `productos`
+  MODIFY `id_producto` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
 
 --
 -- AUTO_INCREMENT de la tabla `roles`
 --
 ALTER TABLE `roles`
-  MODIFY `id_rol` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
+  MODIFY `id_rol` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
 
 --
 -- AUTO_INCREMENT de la tabla `rutina`
 --
 ALTER TABLE `rutina`
-  MODIFY `id_rutina` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
+  MODIFY `id_rutina` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
 
 --
 -- AUTO_INCREMENT de la tabla `usuarios`
 --
 ALTER TABLE `usuarios`
-  MODIFY `id_usuario` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=11;
+  MODIFY `id_usuario` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=11;
 
 --
 -- Restricciones para tablas volcadas
 --
+
+--
+-- Filtros para la tabla `asistencia_profes`
+--
+ALTER TABLE `asistencia_profes`
+  ADD CONSTRAINT `asistencia_profes_ibfk_1` FOREIGN KEY (`id_usuario`) REFERENCES `usuarios` (`id_usuario`);
+
+--
+-- Filtros para la tabla `caja_detalle`
+--
+ALTER TABLE `caja_detalle`
+  ADD CONSTRAINT `caja_detalle_ibfk_1` FOREIGN KEY (`id_movimiento`) REFERENCES `caja_movimientos` (`id_movimiento`),
+  ADD CONSTRAINT `caja_detalle_ibfk_2` FOREIGN KEY (`id_producto`) REFERENCES `productos` (`id_producto`);
+
+--
+-- Filtros para la tabla `caja_movimientos`
+--
+ALTER TABLE `caja_movimientos`
+  ADD CONSTRAINT `caja_movimientos_ibfk_1` FOREIGN KEY (`id_usuario`) REFERENCES `usuarios` (`id_usuario`),
+  ADD CONSTRAINT `caja_movimientos_ibfk_2` FOREIGN KEY (`id_cuota`) REFERENCES `cuotas` (`id_cuota`);
 
 --
 -- Filtros para la tabla `clases`
@@ -1309,6 +1920,18 @@ ALTER TABLE `datos_personales`
 ALTER TABLE `ejercicios_usuarios_rm`
   ADD CONSTRAINT `ejercicios_usuarios_rm_ibfk_1` FOREIGN KEY (`id_usuario`) REFERENCES `usuarios` (`id_usuario`),
   ADD CONSTRAINT `ejercicios_usuarios_rm_ibfk_2` FOREIGN KEY (`id_ejercicio`) REFERENCES `ejercicios` (`id_ejercicio`);
+
+--
+-- Filtros para la tabla `horas_pactadas`
+--
+ALTER TABLE `horas_pactadas`
+  ADD CONSTRAINT `horas_pactadas_ibfk_1` FOREIGN KEY (`id_usuario`) REFERENCES `usuarios` (`id_usuario`);
+
+--
+-- Filtros para la tabla `liquidaciones_profes`
+--
+ALTER TABLE `liquidaciones_profes`
+  ADD CONSTRAINT `liquidaciones_profes_ibfk_1` FOREIGN KEY (`id_usuario`) REFERENCES `usuarios` (`id_usuario`);
 
 --
 -- Filtros para la tabla `planes_disciplinas`
