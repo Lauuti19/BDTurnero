@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Servidor: db
--- Tiempo de generación: 19-08-2025 a las 15:00:57
+-- Tiempo de generación: 26-08-2025 a las 00:34:58
 -- Versión del servidor: 9.3.0
 -- Versión de PHP: 8.2.27
 
@@ -66,6 +66,17 @@ END$$
 CREATE DEFINER=`root`@`localhost` PROCEDURE `CreateExercise` (IN `p_name` VARCHAR(100), IN `p_link` VARCHAR(255))   BEGIN
     INSERT INTO ejercicios (nombre, link, activa)
     VALUES (p_name, p_link, TRUE);
+END$$
+
+CREATE DEFINER=`root`@`%` PROCEDURE `CreateHorasPactadas` (IN `p_id_usuario` INT, IN `p_horas_pactadas` INT, IN `p_tarifa` DECIMAL(10,2))   BEGIN
+    -- Validar que no tenga ya un registro
+    IF EXISTS (SELECT 1 FROM horas_pactadas WHERE id_usuario = p_id_usuario) THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'El usuario ya tiene horas pactadas asignadas';
+    END IF;
+
+    INSERT INTO horas_pactadas (id_usuario, horas_pactadas, tarifa)
+    VALUES (p_id_usuario, p_horas_pactadas, p_tarifa);
 END$$
 
 CREATE DEFINER=`root`@`localhost` PROCEDURE `CreatePlan` (IN `p_nombre` VARCHAR(100), IN `p_descripcion` TEXT, IN `p_monto` DECIMAL(10,2), IN `p_creditos_total` INT, IN `p_disciplinas` TEXT)   BEGIN
@@ -193,6 +204,17 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `CreateUserRoutineWithExercises` (IN
     CLOSE cur;
 END$$
 
+CREATE DEFINER=`root`@`%` PROCEDURE `CreateWorkHours` (IN `p_user_id` INT, IN `p_work_hours` INT, IN `p_rate` DECIMAL(10,2))   BEGIN
+    -- If a previous inactive record exists, reactivate it instead of inserting duplicate
+    IF EXISTS (SELECT 1 FROM horas_pactadas WHERE id_usuario = p_user_id AND active = 1) THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'The user already has active assigned work hours';
+    END IF;
+
+    INSERT INTO horas_pactadas (id_usuario, horas_pactadas, tarifa, active)
+    VALUES (p_user_id, p_work_hours, p_rate, 1);
+END$$
+
 CREATE DEFINER=`root`@`localhost` PROCEDURE `DeleteClass` (IN `p_id_clase` INT)   BEGIN
     UPDATE clases
     SET activa = FALSE
@@ -303,6 +325,15 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `GetAllExercises` ()   BEGIN
     WHERE activa = TRUE;
 END$$
 
+CREATE DEFINER=`root`@`%` PROCEDURE `GetAsistenciasProfes` (IN `p_desde` DATE, IN `p_hasta` DATE, IN `p_periodo` CHAR(7))   BEGIN
+    SELECT a.id_asistencia, a.id_usuario, u.nombre, a.fecha, a.check_in, a.check_out, a.horas_total
+    FROM asistencia_profes a
+    JOIN usuarios u ON a.id_usuario = u.id_usuario
+    WHERE (p_desde IS NOT NULL AND p_hasta IS NOT NULL AND a.fecha BETWEEN p_desde AND p_hasta)
+       OR (p_periodo IS NOT NULL AND DATE_FORMAT(a.fecha, '%Y-%m') = p_periodo)
+    ORDER BY a.fecha DESC;
+END$$
+
 CREATE DEFINER=`root`@`%` PROCEDURE `GetCashEfectivoDisponible` ()   BEGIN
   SELECT
     COALESCE(
@@ -380,7 +411,6 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `GetClassesByUser` (IN `p_id_usuario
     INTO v_id_cuota, v_id_plan, v_creditos
     FROM cuotas
     WHERE id_usuario = p_id_usuario
-      AND estado_pago = 'Paga'
       AND creditos_disponibles > 0
       AND fecha_vencimiento >= p_fecha
     ORDER BY fecha_pago DESC
@@ -417,10 +447,54 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `GetDisciplinas` ()   BEGIN
     WHERE activa = TRUE;
 END$$
 
+CREATE DEFINER=`root`@`%` PROCEDURE `GetHorasTrabajadasProfes` (IN `p_desde` DATE, IN `p_hasta` DATE, IN `p_periodo` CHAR(7))   BEGIN
+    SELECT u.id_usuario, u.nombre, COALESCE(SUM(a.horas_total),0) AS horas_trabajadas
+    FROM usuarios u
+    LEFT JOIN asistencia_profes a ON u.id_usuario = a.id_usuario
+    WHERE u.id_rol IN (1,2)
+      AND (
+        (p_desde IS NOT NULL AND p_hasta IS NOT NULL AND a.fecha BETWEEN p_desde AND p_hasta)
+        OR (p_periodo IS NOT NULL AND DATE_FORMAT(a.fecha, '%Y-%m') = p_periodo)
+      )
+    GROUP BY u.id_usuario, u.nombre;
+END$$
+
 CREATE DEFINER=`root`@`localhost` PROCEDURE `GetPlanes` ()   BEGIN
     SELECT id_plan, nombre, descripcion, monto, creditos_total
     FROM planes
     WHERE activa = TRUE;
+END$$
+
+CREATE DEFINER=`root`@`%` PROCEDURE `GetPreLiquidacionProfesor` (IN `p_id_usuario` INT, IN `p_periodo` CHAR(7))   BEGIN
+    DECLARE v_horas_pactadas INT;
+    DECLARE v_tarifa DECIMAL(10,2);
+    DECLARE v_horas_trabajadas DECIMAL(10,2);
+    DECLARE v_total DECIMAL(10,2);
+
+    -- Horas pactadas y tarifa
+    SELECT horas_pactadas, tarifa
+    INTO v_horas_pactadas, v_tarifa
+    FROM horas_pactadas
+    WHERE id_usuario = p_id_usuario;
+
+    -- Sumar todas las horas trabajadas del mes
+    SELECT IFNULL(SUM(horas_total),0)
+    INTO v_horas_trabajadas
+    FROM asistencia_profes
+    WHERE id_usuario = p_id_usuario
+      AND DATE_FORMAT(fecha, '%Y-%m') = p_periodo;
+
+    -- Calcular total
+    SET v_total = v_horas_trabajadas * v_tarifa;
+
+    -- Devolver resultado sin insertar
+    SELECT 
+        p_id_usuario AS id_usuario,
+        p_periodo   AS periodo,
+        v_horas_pactadas AS horas_pactadas,
+        v_tarifa    AS tarifa,
+        v_horas_trabajadas AS horas_trabajadas,
+        v_total     AS total;
 END$$
 
 CREATE DEFINER=`root`@`%` PROCEDURE `GetProducts` ()   BEGIN
@@ -557,6 +631,73 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `GetUsersByClassAndDate` (IN `p_clas
     JOIN usuarios u ON cu.id_usuario = u.id_usuario
     WHERE cu.id_clase = p_class_id
       AND cu.fecha = p_date;
+END$$
+
+CREATE DEFINER=`root`@`%` PROCEDURE `GetWorkedHours` (IN `p_id_usuario` INT, IN `p_periodo` CHAR(7))   BEGIN
+    -- Si no envías periodo (o viene vacío), uso el mes actual YYYY-MM
+    DECLARE v_periodo CHAR(7);
+    SET v_periodo = IFNULL(NULLIF(p_periodo, ''), DATE_FORMAT(CURDATE(), '%Y-%m'));
+
+    SELECT COALESCE(SUM(horas_total), 0) AS horas_trabajadas
+    FROM asistencia_profes
+    WHERE id_usuario = p_id_usuario
+      AND DATE_FORMAT(fecha, '%Y-%m') = v_periodo;
+END$$
+
+CREATE DEFINER=`root`@`%` PROCEDURE `GetWorkedHoursByRange` (IN `p_id_usuario` INT, IN `p_desde` DATE, IN `p_hasta` DATE)   BEGIN
+    SELECT COALESCE(SUM(horas_total), 0) AS horas_trabajadas
+    FROM asistencia_profes
+    WHERE id_usuario = p_id_usuario
+      AND fecha BETWEEN p_desde AND p_hasta;
+END$$
+
+CREATE DEFINER=`root`@`%` PROCEDURE `GetWorkHours` (IN `p_user_id` INT)   BEGIN
+    IF p_user_id IS NULL THEN
+        SELECT hp.id_pactado, hp.id_usuario, u.nombre AS user_name,
+               hp.horas_pactadas AS work_hours, hp.tarifa AS rate, hp.active
+        FROM horas_pactadas hp
+        JOIN usuarios u ON hp.id_usuario = u.id_usuario
+        WHERE hp.active = 1;
+    ELSE
+        SELECT hp.id_pactado, hp.id_usuario, u.nombre AS user_name,
+               hp.horas_pactadas AS work_hours, hp.tarifa AS rate, hp.active
+        FROM horas_pactadas hp
+        JOIN usuarios u ON hp.id_usuario = u.id_usuario
+        WHERE hp.id_usuario = p_user_id
+          AND hp.active = 1;
+    END IF;
+END$$
+
+CREATE DEFINER=`root`@`%` PROCEDURE `LiquidarProfesor` (IN `p_id_usuario` INT, IN `p_periodo` CHAR(7), IN `p_horas_pagadas` DECIMAL(10,2))   BEGIN
+    DECLARE v_horas_pactadas INT;
+    DECLARE v_tarifa DECIMAL(10,2);
+    DECLARE v_horas_trabajadas DECIMAL(10,2);
+    DECLARE v_total DECIMAL(10,2);
+
+    -- Horas pactadas y tarifa
+    SELECT horas_pactadas, tarifa
+    INTO v_horas_pactadas, v_tarifa
+    FROM horas_pactadas
+    WHERE id_usuario = p_id_usuario;
+
+    -- Sumar todas las horas trabajadas del mes
+    SELECT IFNULL(SUM(horas_total),0)
+    INTO v_horas_trabajadas
+    FROM asistencia_profes
+    WHERE id_usuario = p_id_usuario
+      AND DATE_FORMAT(fecha, '%Y-%m') = p_periodo;
+
+    -- Calcular total en base a las horas que quiero pagar
+    SET v_total = p_horas_pagadas * v_tarifa;
+
+    INSERT INTO liquidaciones_profes (
+        id_usuario, periodo, horas_pactadas, horas_trabajadas,
+        horas_pagadas, total
+    ) VALUES (
+        p_id_usuario, p_periodo, v_horas_pactadas, v_horas_trabajadas,
+        p_horas_pagadas,
+        v_total
+    );
 END$$
 
 CREATE DEFINER=`root`@`localhost` PROCEDURE `PayFee` (IN `p_id_cuota` INT, IN `p_metodo_pago` ENUM('efectivo','transferencia'))   BEGIN
@@ -780,10 +921,45 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `RegisterUser` (IN `p_email` VARCHAR
     VALUES (new_user_id, p_dni, p_celular);
 END$$
 
+CREATE DEFINER=`root`@`%` PROCEDURE `RegistrarCheckIn` (IN `p_id_usuario` INT, IN `p_fecha` DATE, IN `p_hora` TIME)   BEGIN
+    INSERT INTO asistencia_profes (id_usuario, fecha, check_in)
+    VALUES (p_id_usuario, p_fecha, p_hora);
+END$$
+
+CREATE DEFINER=`root`@`%` PROCEDURE `RegistrarCheckOut` (IN `p_id_usuario` INT, IN `p_fecha` DATE, IN `p_hora` TIME)   BEGIN
+    DECLARE v_id_asistencia INT;
+    DECLARE v_check_in TIME;
+
+    SELECT id_asistencia, check_in
+    INTO v_id_asistencia, v_check_in
+    FROM asistencia_profes
+    WHERE id_usuario = p_id_usuario
+      AND fecha = p_fecha
+      AND check_out IS NULL
+    ORDER BY check_in DESC
+    LIMIT 1;
+
+    IF v_id_asistencia IS NULL THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'No existe un check-in pendiente para cerrar.';
+    END IF;
+
+    UPDATE asistencia_profes
+    SET check_out = p_hora,
+        horas_total = TIMESTAMPDIFF(MINUTE, v_check_in, p_hora) / 60
+    WHERE id_asistencia = v_id_asistencia;
+END$$
+
 CREATE DEFINER=`root`@`localhost` PROCEDURE `SearchExercisesByName` (IN `p_name` VARCHAR(100))   BEGIN
     SELECT id_ejercicio, nombre, link
     FROM ejercicios
     WHERE activa = TRUE AND nombre LIKE CONCAT('%', p_name, '%');
+END$$
+
+CREATE DEFINER=`root`@`%` PROCEDURE `SoftDeleteWorkHours` (IN `p_id_pactado` INT)   BEGIN
+    UPDATE horas_pactadas
+    SET active = 0
+    WHERE id_pactado = p_id_pactado;
 END$$
 
 CREATE DEFINER=`root`@`localhost` PROCEDURE `UnregisterFromClass` (IN `p_id_usuario` INT, IN `p_id_clase` INT, IN `p_fecha` DATE)   BEGIN
@@ -974,6 +1150,14 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `UpdateUserRoutine` (IN `p_id_rutina
   END IF;
 END$$
 
+CREATE DEFINER=`root`@`%` PROCEDURE `UpdateWorkHours` (IN `p_id_pactado` INT, IN `p_work_hours` INT, IN `p_rate` DECIMAL(10,2))   BEGIN
+    UPDATE horas_pactadas
+    SET horas_pactadas = COALESCE(p_work_hours, horas_pactadas),
+        tarifa = COALESCE(p_rate, tarifa)
+    WHERE id_pactado = p_id_pactado
+      AND active = 1;
+END$$
+
 DELIMITER ;
 
 -- --------------------------------------------------------
@@ -990,6 +1174,16 @@ CREATE TABLE `asistencia_profes` (
   `check_out` time DEFAULT NULL,
   `horas_total` decimal(5,2) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+--
+-- Volcado de datos para la tabla `asistencia_profes`
+--
+
+INSERT INTO `asistencia_profes` (`id_asistencia`, `id_usuario`, `fecha`, `check_in`, `check_out`, `horas_total`) VALUES
+(1, 6, '2025-08-19', '10:00:00', '14:00:00', 4.00),
+(2, 6, '2025-08-25', '08:00:00', '12:00:00', 4.00),
+(3, 9, '2025-08-25', '13:00:00', '21:00:00', 8.00),
+(4, 9, '2025-08-26', '13:00:00', '21:00:00', 8.00);
 
 -- --------------------------------------------------------
 
@@ -1179,16 +1373,14 @@ CREATE TABLE `caja_movimientos` (
 --
 
 INSERT INTO `caja_movimientos` (`id_movimiento`, `fecha`, `tipo`, `concepto`, `metodo_pago`, `monto`, `pagado`, `id_usuario`, `id_cuota`) VALUES
-(1, '2025-08-19 01:00:37', 'ingreso', 'cuota', 'efectivo', 26000.00, 1, 6, 4),
-(2, '2025-08-19 01:10:21', 'ingreso', 'cuota', 'efectivo', 25000.00, 1, 9, 5),
-(3, '2025-08-19 01:10:48', 'ingreso', 'cuota', 'efectivo', 20000.00, 1, 6, 6),
 (4, '2025-08-19 01:48:36', 'ingreso', 'Compra kiosco', 'efectivo', 0.00, 1, 6, NULL),
 (5, '2025-08-19 01:49:02', 'ingreso', 'Compra kiosco', 'efectivo', 32000.00, 1, 6, NULL),
 (6, '2025-08-19 01:52:11', 'ingreso', 'Compra kiosco', 'efectivo', 0.00, 1, 6, NULL),
 (7, '2025-08-19 01:52:24', 'ingreso', 'Compra kiosco', 'efectivo', 32000.00, 1, 6, NULL),
 (9, '2025-08-19 02:25:18', 'ingreso', 'Venta de productos', 'efectivo', 17000.00, 1, 6, NULL),
 (10, '2025-08-19 02:25:24', 'ingreso', 'Venta de productos', 'efectivo', 17000.00, 1, 6, NULL),
-(11, '2025-08-19 14:54:50', 'ingreso', 'Venta de productos', 'efectivo', 17000.00, 1, 6, NULL);
+(11, '2025-08-19 14:54:50', 'ingreso', 'Venta de productos', 'efectivo', 17000.00, 1, 6, NULL),
+(13, '2025-08-21 15:23:22', 'ingreso', 'cuota', 'efectivo', 24998.00, 1, 4, 8);
 
 -- --------------------------------------------------------
 
@@ -1262,6 +1454,8 @@ CREATE TABLE `clases_usuarios` (
 INSERT INTO `clases_usuarios` (`id_clase`, `id_usuario`, `presente`, `fecha`) VALUES
 (1, 4, NULL, '2025-05-26'),
 (2, 4, NULL, '2025-05-27'),
+(5, 4, NULL, '2025-08-22'),
+(6, 4, NULL, '2025-08-23'),
 (7, 4, NULL, '2025-05-26'),
 (10, 4, NULL, '2025-06-05');
 
@@ -1288,9 +1482,8 @@ CREATE TABLE `cuotas` (
 
 INSERT INTO `cuotas` (`id_cuota`, `id_usuario`, `id_plan`, `fecha_pago`, `fecha_vencimiento`, `estado_pago`, `creditos_total`, `creditos_disponibles`) VALUES
 (1, 4, 1, '2025-05-12', '2025-06-11', 'Paga', 8, 28),
-(4, 6, 3, '2025-08-19', '2025-09-19', 'Paga', 24, 24),
-(5, 9, 4, '2025-08-19', '2025-09-19', 'Paga', 24, 24),
-(6, 6, 1, '2025-08-19', '2025-09-19', 'Paga', 8, 8);
+(6, 6, 1, '2025-08-19', '2025-09-19', 'Paga', 8, 8),
+(8, 4, 5, '2025-08-21', '2025-09-21', 'Paga', 23, 21);
 
 -- --------------------------------------------------------
 
@@ -1408,7 +1601,7 @@ CREATE TABLE `ejercicios_usuarios_rm` (
 --
 
 INSERT INTO `ejercicios_usuarios_rm` (`id_usuario`, `id_ejercicio`, `peso`, `repeticiones`, `fecha_actualizacion`, `notas`) VALUES
-(4, 1, 85.00, 1, '2025-06-23 22:26:10', '');
+(4, 1, 90.00, 1, '2025-08-22 00:11:30', '');
 
 -- --------------------------------------------------------
 
@@ -1440,8 +1633,17 @@ CREATE TABLE `horas_pactadas` (
   `id_pactado` int NOT NULL,
   `id_usuario` int NOT NULL,
   `horas_pactadas` int NOT NULL,
-  `tarifa` decimal(10,2) NOT NULL
+  `tarifa` decimal(10,2) NOT NULL,
+  `active` tinyint(1) NOT NULL DEFAULT '1'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+--
+-- Volcado de datos para la tabla `horas_pactadas`
+--
+
+INSERT INTO `horas_pactadas` (`id_pactado`, `id_usuario`, `horas_pactadas`, `tarifa`, `active`) VALUES
+(1, 6, 45, 7800.00, 1),
+(2, 9, 40, 6500.00, 1);
 
 -- --------------------------------------------------------
 
@@ -1459,6 +1661,14 @@ CREATE TABLE `liquidaciones_profes` (
   `total` decimal(10,2) NOT NULL,
   `fecha_liquidacion` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+--
+-- Volcado de datos para la tabla `liquidaciones_profes`
+--
+
+INSERT INTO `liquidaciones_profes` (`id_liquidacion`, `id_usuario`, `periodo`, `horas_pactadas`, `horas_trabajadas`, `horas_pagadas`, `total`, `fecha_liquidacion`) VALUES
+(1, 6, '2025-08', 45, 8, 0, 62400.00, '2025-08-25 23:40:00'),
+(2, 6, '2025-08', 45, 8, 16, 124800.00, '2025-08-26 00:25:34');
 
 -- --------------------------------------------------------
 
@@ -1481,8 +1691,7 @@ CREATE TABLE `planes` (
 
 INSERT INTO `planes` (`id_plan`, `nombre`, `descripcion`, `monto`, `creditos_total`, `activa`) VALUES
 (1, 'Plan 8c multidisciplina', 'Permite asistir dos veces por semana a dos disciplinas', 20000.00, 8, 1),
-(3, 'Crossfit Semanal', '6 creditos semanales para Crossfit', 26000.00, 24, 1),
-(4, 'Plan Full', 'Acceso a todas las disciplinas', 25000.00, 24, 0);
+(5, 'Crossfit Semanal', '24 creditos para Crossfit', 24998.00, 24, 1);
 
 -- --------------------------------------------------------
 
@@ -1501,7 +1710,9 @@ CREATE TABLE `planes_disciplinas` (
 
 INSERT INTO `planes_disciplinas` (`id_plan`, `id_disciplina`) VALUES
 (1, 1),
-(1, 2);
+(5, 1),
+(1, 2),
+(5, 4);
 
 -- --------------------------------------------------------
 
@@ -1771,7 +1982,7 @@ ALTER TABLE `usuarios`
 -- AUTO_INCREMENT de la tabla `asistencia_profes`
 --
 ALTER TABLE `asistencia_profes`
-  MODIFY `id_asistencia` int NOT NULL AUTO_INCREMENT;
+  MODIFY `id_asistencia` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=5;
 
 --
 -- AUTO_INCREMENT de la tabla `caja_detalle`
@@ -1783,7 +1994,7 @@ ALTER TABLE `caja_detalle`
 -- AUTO_INCREMENT de la tabla `caja_movimientos`
 --
 ALTER TABLE `caja_movimientos`
-  MODIFY `id_movimiento` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=12;
+  MODIFY `id_movimiento` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=14;
 
 --
 -- AUTO_INCREMENT de la tabla `clases`
@@ -1795,7 +2006,7 @@ ALTER TABLE `clases`
 -- AUTO_INCREMENT de la tabla `cuotas`
 --
 ALTER TABLE `cuotas`
-  MODIFY `id_cuota` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=7;
+  MODIFY `id_cuota` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=9;
 
 --
 -- AUTO_INCREMENT de la tabla `dias`
@@ -1825,19 +2036,19 @@ ALTER TABLE `estados`
 -- AUTO_INCREMENT de la tabla `horas_pactadas`
 --
 ALTER TABLE `horas_pactadas`
-  MODIFY `id_pactado` int NOT NULL AUTO_INCREMENT;
+  MODIFY `id_pactado` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
 
 --
 -- AUTO_INCREMENT de la tabla `liquidaciones_profes`
 --
 ALTER TABLE `liquidaciones_profes`
-  MODIFY `id_liquidacion` int NOT NULL AUTO_INCREMENT;
+  MODIFY `id_liquidacion` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
 
 --
 -- AUTO_INCREMENT de la tabla `planes`
 --
 ALTER TABLE `planes`
-  MODIFY `id_plan` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=5;
+  MODIFY `id_plan` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=6;
 
 --
 -- AUTO_INCREMENT de la tabla `productos`
