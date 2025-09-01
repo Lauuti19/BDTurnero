@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Servidor: db
--- Tiempo de generación: 31-08-2025 a las 22:30:45
+-- Tiempo de generación: 01-09-2025 a las 23:12:52
 -- Versión del servidor: 9.3.0
 -- Versión de PHP: 8.2.27
 
@@ -793,7 +793,7 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `PayFee` (IN `p_id_cuota` INT, IN `p
     END IF;
 END$$
 
-CREATE DEFINER=`root`@`%` PROCEDURE `RegisterCajaMovimiento` (IN `p_tipo` ENUM('Ingreso','Egreso'), IN `p_metodo_pago` ENUM('Efectivo','Tarjeta','Transferencia'), IN `p_id_usuario` INT, IN `p_concepto` VARCHAR(100), IN `p_detalles` JSON)   BEGIN
+CREATE DEFINER=`root`@`%` PROCEDURE `RegisterCajaMovimiento` (IN `p_tipo` ENUM('Ingreso','Egreso'), IN `p_metodo_pago` ENUM('Efectivo','Tarjeta','Transferencia'), IN `p_id_usuario` INT, IN `p_concepto` VARCHAR(100), IN `p_detalles` JSON, IN `p_pagado` TINYINT)   BEGIN
     DECLARE v_id_movimiento INT;
     DECLARE v_total DECIMAL(10,2) DEFAULT 0;
     DECLARE v_index INT DEFAULT 0;
@@ -804,7 +804,7 @@ CREATE DEFINER=`root`@`%` PROCEDURE `RegisterCajaMovimiento` (IN `p_tipo` ENUM('
 
     -- Insertamos cabecera con monto = 0 (se actualiza después)
     INSERT INTO caja_movimientos (fecha, tipo, concepto, metodo_pago, monto, pagado, id_usuario, id_cuota)
-    VALUES (NOW(), p_tipo, p_concepto, p_metodo_pago, 0, 1, p_id_usuario, NULL);
+    VALUES (NOW(), p_tipo, p_concepto, p_metodo_pago, 0, p_pagado, p_id_usuario, NULL);
 
     SET v_id_movimiento = LAST_INSERT_ID();
 
@@ -1266,7 +1266,14 @@ INSERT INTO `caja_detalle` (`id_detalle`, `id_movimiento`, `id_producto`, `canti
 (13, 11, 1, 1, 15000.00),
 (14, 11, 2, 1, 2000.00),
 (15, 14, 1, 1, 15000.00),
-(16, 14, 2, 1, 2000.00);
+(16, 14, 2, 1, 2000.00),
+(17, 15, 2, 2, 2000.00),
+(18, 15, 1, 1, 15000.00),
+(19, 16, 1, 3, 15000.00),
+(20, 17, 1, 2, 15000.00),
+(21, 17, 2, 3, 2000.00),
+(22, 18, 1, 3, 15000.00),
+(23, 19, 2, 1, 2000.00);
 
 --
 -- Disparadores `caja_detalle`
@@ -1431,7 +1438,12 @@ INSERT INTO `caja_movimientos` (`id_movimiento`, `fecha`, `tipo`, `concepto`, `m
 (10, '2025-08-19 02:25:24', 'ingreso', 'Venta de productos', 'efectivo', 17000.00, 1, 6, NULL),
 (11, '2025-08-19 14:54:50', 'ingreso', 'Venta de productos', 'efectivo', 17000.00, 1, 6, NULL),
 (13, '2025-08-21 15:23:22', 'ingreso', 'cuota', 'efectivo', 24998.00, 1, 4, 8),
-(14, '2025-08-31 18:33:41', 'ingreso', 'Venta de productos', 'efectivo', 17000.00, 1, 6, NULL);
+(14, '2025-08-31 18:33:41', 'ingreso', 'Venta de productos', 'efectivo', 17000.00, 1, 6, NULL),
+(15, '2025-09-01 16:03:57', 'egreso', 'Kiosco', 'efectivo', 19000.00, 1, 6, NULL),
+(16, '2025-09-01 16:08:59', 'ingreso', 'Prote', 'transferencia', 45000.00, 1, 6, NULL),
+(17, '2025-09-01 16:09:29', 'ingreso', 'Prote y kisco', 'transferencia', 36000.00, 1, 6, NULL),
+(18, '2025-09-01 23:10:43', 'ingreso', 'Prote', 'efectivo', 45000.00, 1, 7, NULL),
+(19, '2025-09-01 23:11:25', 'ingreso', 'Kiosco', 'efectivo', 2000.00, 0, 7, NULL);
 
 -- --------------------------------------------------------
 
@@ -1784,8 +1796,8 @@ CREATE TABLE `productos` (
 --
 
 INSERT INTO `productos` (`id_producto`, `nombre`, `descripcion`, `precio`, `stock`) VALUES
-(1, 'Proteína Whey', 'Suplemento de proteína en polvo', 15000.00, 12),
-(2, 'Powerade Frutos Rojos', 'Bebida isotónica', 2000.00, 15);
+(1, 'Proteína Whey', 'Suplemento de proteína en polvo', 15000.00, 5),
+(2, 'Powerade Frutos Rojos', 'Bebida isotónica', 2000.00, 13);
 
 -- --------------------------------------------------------
 
@@ -2039,13 +2051,13 @@ ALTER TABLE `asistencia_profes`
 -- AUTO_INCREMENT de la tabla `caja_detalle`
 --
 ALTER TABLE `caja_detalle`
-  MODIFY `id_detalle` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=17;
+  MODIFY `id_detalle` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=24;
 
 --
 -- AUTO_INCREMENT de la tabla `caja_movimientos`
 --
 ALTER TABLE `caja_movimientos`
-  MODIFY `id_movimiento` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=15;
+  MODIFY `id_movimiento` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=20;
 
 --
 -- AUTO_INCREMENT de la tabla `clases`
