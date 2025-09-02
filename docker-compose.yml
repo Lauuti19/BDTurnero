@@ -6,12 +6,9 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: "rootpassword"
       MYSQL_DATABASE: turnero
-      MYSQL_ALLOW_EMPTY_PASSWORD: "no"
     command: 
       - --character-set-server=utf8mb4 
-      - --collation-server=utf8mb4_general_ci 
-      - --default-time-zone=+00:00
-      - --innodb-buffer-pool-size=128M
+      - --collation-server=utf8mb4_general_ci
     volumes:
       - db_data:/var/lib/mysql
     networks:
@@ -19,13 +16,10 @@ services:
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-prootpassword"]
       timeout: 30s
-      retries: 15
-      start_period: 60s
-    restart: unless-stopped
+      retries: 10
 
   phpmyadmin:
     image: phpmyadmin/phpmyadmin:latest
-    restart: always
     environment:
       PMA_HOST: db
       PMA_USER: root
@@ -42,4 +36,4 @@ volumes:
 
 networks:
   turnero-network:
-    driver: bridge  # Cambia de external a bridge
+    external: true  # ← CAMBIAR a external
