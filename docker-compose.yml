@@ -1,22 +1,27 @@
 services:
   db:
-    image: mysql:8.0  # Usa versión específica en lugar de latest
+    image: mysql:8.0
     ports:
       - "3306:3306"
     environment:
-      MYSQL_ROOT_PASSWORD: "rootpassword"  # No usar empty password
+      MYSQL_ROOT_PASSWORD: "rootpassword"
       MYSQL_DATABASE: turnero
       MYSQL_ALLOW_EMPTY_PASSWORD: "no"
-    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_general_ci --default-time-zone=+00:00
+    command: 
+      - --character-set-server=utf8mb4 
+      - --collation-server=utf8mb4_general_ci 
+      - --default-time-zone=+00:00
+      - --innodb-buffer-pool-size=128M  # Reducir uso de memoria
     volumes:
       - db_data:/var/lib/mysql
-      # - ./turnero.sql:/docker-entrypoint-initdb.d/turnero.sql:ro 
     networks:
       - turnero-network
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
-      timeout: 20s
-      retries: 10
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-prootpassword"]
+      timeout: 30s
+      retries: 15
+      start_period: 60s
+    restart: unless-stopped
 
   phpmyadmin:
     image: phpmyadmin/phpmyadmin:latest
@@ -24,17 +29,10 @@ services:
     environment:
       PMA_HOST: db
       PMA_USER: root
-      PMA_PASSWORD: ""
+      PMA_PASSWORD: "rootpassword"  # Usar la misma contraseña
     ports:
       - "8080:80"
     depends_on:
       - db
     networks:
       - turnero-network
-
-volumes:
-  db_data:
-
-networks:
-  turnero-network:
-    external: true
