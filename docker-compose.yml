@@ -11,7 +11,7 @@ services:
       - --character-set-server=utf8mb4 
       - --collation-server=utf8mb4_general_ci 
       - --default-time-zone=+00:00
-      - --innodb-buffer-pool-size=128M  # Reducir uso de memoria
+      - --innodb-buffer-pool-size=128M
     volumes:
       - db_data:/var/lib/mysql
     networks:
@@ -29,10 +29,17 @@ services:
     environment:
       PMA_HOST: db
       PMA_USER: root
-      PMA_PASSWORD: "rootpassword"  # Usar la misma contraseña
+      PMA_PASSWORD: "rootpassword"
     ports:
       - "8080:80"
     depends_on:
       - db
     networks:
       - turnero-network
+
+volumes:
+  db_data:
+
+networks:
+  turnero-network:
+    driver: bridge  # Cambia de external a bridge
