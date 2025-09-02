@@ -1,19 +1,22 @@
-version: "3.8"
-
 services:
   db:
-    image: mysql:latest
+    image: mysql:8.0  # Usa versión específica en lugar de latest
     ports:
       - "3306:3306"
     environment:
-      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+      MYSQL_ROOT_PASSWORD: "rootpassword"  # No usar empty password
       MYSQL_DATABASE: turnero
-    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_general_ci
+      MYSQL_ALLOW_EMPTY_PASSWORD: "no"
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_general_ci --default-time-zone=+00:00
     volumes:
       - db_data:/var/lib/mysql
-      - ./turnero.sql:/docker-entrypoint-initdb.d/turnero.sql
+      - ./turnero.sql:/docker-entrypoint-initdb.d/turnero.sql:ro  # Agregar :ro para read-only
     networks:
       - turnero-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
 
   phpmyadmin:
     image: phpmyadmin/phpmyadmin:latest
