@@ -6,18 +6,21 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: "rootpassword"
       MYSQL_DATABASE: turnero
+      MYSQL_ALLOW_EMPTY_PASSWORD: "no"
     command: 
       - --character-set-server=utf8mb4 
       - --collation-server=utf8mb4_general_ci
+      - --init-connect='SET NAMES utf8mb4'
     volumes:
       - db_data:/var/lib/mysql
-      - ./turnero.sql:/docker-entrypoint-initdb.d/turnero.sql 
+      - ./turnero.sql:/docker-entrypoint-initdb.d/turnero.sql:ro  
     networks:
       - turnero-network
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-prootpassword"]
       timeout: 30s
       retries: 10
+      start_period: 40s 
 
   phpmyadmin:
     image: phpmyadmin/phpmyadmin:latest
@@ -28,7 +31,8 @@ services:
     ports:
       - "8080:80"
     depends_on:
-      - db
+      db:
+        condition: service_healthy  
     networks:
       - turnero-network
 
@@ -37,4 +41,4 @@ volumes:
 
 networks:
   turnero-network:
-    external: false 
+    external: true  
