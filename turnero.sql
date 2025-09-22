@@ -2,10 +2,10 @@
 -- version 5.2.2
 -- https://www.phpmyadmin.net/
 --
--- Servidor: db
--- Tiempo de generación: 01-09-2025 a las 23:12:52
--- Versión del servidor: 9.3.0
--- Versión de PHP: 8.2.27
+-- Host: db
+-- Generation Time: Sep 22, 2025 at 10:31 PM
+-- Server version: 9.4.0
+-- PHP Version: 8.2.27
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
 START TRANSACTION;
@@ -18,12 +18,12 @@ SET time_zone = "+00:00";
 /*!40101 SET NAMES utf8mb4 */;
 
 --
--- Base de datos: `turnero`
+-- Database: `turnero`
 --
 
 DELIMITER $$
 --
--- Procedimientos
+-- Procedures
 --
 CREATE DEFINER=`root`@`localhost` PROCEDURE `BuscarUsuariosPorNombre` (IN `nombre_busqueda` VARCHAR(100))   BEGIN
     SELECT 
@@ -340,6 +340,27 @@ CREATE DEFINER=`root`@`%` PROCEDURE `GetAsistenciasProfes` (IN `p_desde` DATE, I
     ORDER BY a.fecha DESC;
 END$$
 
+CREATE DEFINER=`root`@`%` PROCEDURE `GetAttendanceStatus` (IN `p_id_usuario` INT, IN `p_fecha` DATE)   BEGIN
+  DECLARE v_check_in TIME;
+  DECLARE v_check_out TIME;
+
+  /* Tomo el último registro de ese día para ese usuario */
+  SELECT MAX(check_in), MAX(check_out)
+    INTO v_check_in, v_check_out
+  FROM asistencia_profes
+  WHERE id_usuario = p_id_usuario
+    AND fecha = p_fecha;
+
+  /* Respondo una sola fila con el estado y las horas (si existen) */
+  IF v_check_in IS NULL THEN
+    SELECT 'none' AS status, NULL AS check_in, NULL AS check_out;
+  ELSEIF v_check_out IS NULL THEN
+    SELECT 'in'   AS status, v_check_in AS check_in, NULL AS check_out;
+  ELSE
+    SELECT 'done' AS status, v_check_in AS check_in, v_check_out AS check_out;
+  END IF;
+END$$
+
 CREATE DEFINER=`root`@`%` PROCEDURE `GetCashEfectivoDisponible` ()   BEGIN
   SELECT
     COALESCE(
@@ -393,6 +414,25 @@ CREATE DEFINER=`root`@`%` PROCEDURE `GetCashSummaryByPaymentMethod` ()   BEGIN
     SUM(CASE WHEN tipo = 'ingreso' THEN monto ELSE -monto END) AS balance
   FROM caja_movimientos
   GROUP BY metodo_pago;
+END$$
+
+CREATE DEFINER=`root`@`%` PROCEDURE `GetCheckStatusDia` (IN `p_id_usuario` INT, IN `p_fecha` DATE)   BEGIN
+    DECLARE v_pendientes INT;
+
+    -- ¿Cuántos check-in sin check-out hay ese día?
+    SELECT COUNT(*) INTO v_pendientes
+    FROM asistencia_profes
+    WHERE id_usuario = p_id_usuario
+      AND fecha = p_fecha
+      AND check_out IS NULL;
+
+    IF v_pendientes > 0 THEN
+        -- Hay al menos un check-in abierto sin check-out
+        SELECT 'CHECK_OUT' AS accion;
+    ELSE
+        -- Todos los registros están cerrados → permitir nuevo check-in
+        SELECT 'CHECK_IN' AS accion;
+    END IF;
 END$$
 
 CREATE DEFINER=`root`@`localhost` PROCEDURE `GetClassesByDay` (IN `p_id_dia` INT)   BEGIN
@@ -837,6 +877,15 @@ CREATE DEFINER=`root`@`%` PROCEDURE `RegisterCajaMovimiento` (IN `p_tipo` ENUM('
     WHERE id_movimiento = v_id_movimiento;
 END$$
 
+CREATE DEFINER=`root`@`%` PROCEDURE `RegisterCashOut` (IN `p_metodo_pago` ENUM('efectivo','transferencia'), IN `p_id_usuario` INT, IN `p_concepto` VARCHAR(100), IN `p_monto` DECIMAL(10,2), IN `p_pagado` TINYINT)   BEGIN
+    INSERT INTO caja_movimientos (
+        fecha, tipo, concepto, metodo_pago, monto, pagado, id_usuario, id_cuota
+    )
+    VALUES (
+        NOW(), 'egreso', p_concepto, p_metodo_pago, p_monto, p_pagado, p_id_usuario, NULL
+    );
+END$$
+
 CREATE DEFINER=`root`@`localhost` PROCEDURE `RegisterClient` (IN `p_email` VARCHAR(255), IN `p_password` VARCHAR(255), IN `p_nombre` VARCHAR(255), IN `p_dni` VARCHAR(20), IN `p_celular` VARCHAR(10))   BEGIN
     DECLARE new_user_id INT;
 
@@ -1094,13 +1143,9 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `UpdatePlan` (IN `p_id_plan` INT, IN
     WHERE id_plan = p_id_plan;
 END$$
 
-CREATE DEFINER=`root`@`%` PROCEDURE `UpdateProduct` (IN `p_id_producto` INT, IN `p_nombre` VARCHAR(100), IN `p_descripcion` TEXT, IN `p_precio` DECIMAL(10,2), IN `p_stock` INT)   BEGIN
+CREATE DEFINER=`root`@`%` PROCEDURE `UpdateProductPrice` (IN `p_id_producto` INT, IN `p_precio` DECIMAL(10,2))   BEGIN
     UPDATE productos
-    SET 
-        nombre = COALESCE(p_nombre, nombre),
-        descripcion = COALESCE(p_descripcion, descripcion),
-        precio = COALESCE(p_precio, precio),
-        stock = COALESCE(p_stock, stock)
+    SET precio = COALESCE(p_precio, precio)
     WHERE id_producto = p_id_producto;
 END$$
 
@@ -1211,7 +1256,7 @@ DELIMITER ;
 -- --------------------------------------------------------
 
 --
--- Estructura de tabla para la tabla `asistencia_profes`
+-- Table structure for table `asistencia_profes`
 --
 
 CREATE TABLE `asistencia_profes` (
@@ -1224,19 +1269,24 @@ CREATE TABLE `asistencia_profes` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
--- Volcado de datos para la tabla `asistencia_profes`
+-- Dumping data for table `asistencia_profes`
 --
 
 INSERT INTO `asistencia_profes` (`id_asistencia`, `id_usuario`, `fecha`, `check_in`, `check_out`, `horas_total`) VALUES
 (1, 6, '2025-08-19', '10:00:00', '14:00:00', 4.00),
 (2, 6, '2025-08-25', '08:00:00', '12:00:00', 4.00),
 (3, 9, '2025-08-25', '13:00:00', '21:00:00', 8.00),
-(4, 9, '2025-08-26', '13:00:00', '21:00:00', 8.00);
+(4, 9, '2025-08-26', '13:00:00', '21:00:00', 8.00),
+(5, 6, '2025-09-09', '21:50:45', NULL, NULL),
+(6, 6, '2025-09-22', '17:42:05', '17:58:55', 0.27),
+(7, 6, '2025-09-22', '17:59:00', '17:59:02', 0.00),
+(8, 6, '2025-09-22', '18:05:55', '18:06:55', 0.02),
+(9, 6, '2025-09-22', '18:07:09', '20:07:14', 2.00);
 
 -- --------------------------------------------------------
 
 --
--- Estructura de tabla para la tabla `caja_detalle`
+-- Table structure for table `caja_detalle`
 --
 
 CREATE TABLE `caja_detalle` (
@@ -1249,7 +1299,7 @@ CREATE TABLE `caja_detalle` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
--- Volcado de datos para la tabla `caja_detalle`
+-- Dumping data for table `caja_detalle`
 --
 
 INSERT INTO `caja_detalle` (`id_detalle`, `id_movimiento`, `id_producto`, `cantidad`, `precio_unitario`) VALUES
@@ -1273,10 +1323,15 @@ INSERT INTO `caja_detalle` (`id_detalle`, `id_movimiento`, `id_producto`, `canti
 (20, 17, 1, 2, 15000.00),
 (21, 17, 2, 3, 2000.00),
 (22, 18, 1, 3, 15000.00),
-(23, 19, 2, 1, 2000.00);
+(23, 19, 2, 1, 2000.00),
+(24, 20, 1, 1, 15000.00),
+(25, 22, 1, 1, 15000.00),
+(26, 22, 2, 1, 2000.00),
+(27, 23, 1, 5, 15000.00),
+(28, 25, 1, 6, 15000.00);
 
 --
--- Disparadores `caja_detalle`
+-- Triggers `caja_detalle`
 --
 DELIMITER $$
 CREATE TRIGGER `trg_check_stock_before_insert` BEFORE INSERT ON `caja_detalle` FOR EACH ROW BEGIN
@@ -1410,7 +1465,7 @@ DELIMITER ;
 -- --------------------------------------------------------
 
 --
--- Estructura de tabla para la tabla `caja_movimientos`
+-- Table structure for table `caja_movimientos`
 --
 
 CREATE TABLE `caja_movimientos` (
@@ -1426,7 +1481,7 @@ CREATE TABLE `caja_movimientos` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
--- Volcado de datos para la tabla `caja_movimientos`
+-- Dumping data for table `caja_movimientos`
 --
 
 INSERT INTO `caja_movimientos` (`id_movimiento`, `fecha`, `tipo`, `concepto`, `metodo_pago`, `monto`, `pagado`, `id_usuario`, `id_cuota`) VALUES
@@ -1443,12 +1498,18 @@ INSERT INTO `caja_movimientos` (`id_movimiento`, `fecha`, `tipo`, `concepto`, `m
 (16, '2025-09-01 16:08:59', 'ingreso', 'Prote', 'transferencia', 45000.00, 1, 6, NULL),
 (17, '2025-09-01 16:09:29', 'ingreso', 'Prote y kisco', 'transferencia', 36000.00, 1, 6, NULL),
 (18, '2025-09-01 23:10:43', 'ingreso', 'Prote', 'efectivo', 45000.00, 1, 7, NULL),
-(19, '2025-09-01 23:11:25', 'ingreso', 'Kiosco', 'efectivo', 2000.00, 0, 7, NULL);
+(19, '2025-09-01 23:11:25', 'ingreso', 'Kiosco', 'efectivo', 2000.00, 0, 7, NULL),
+(20, '2025-09-01 23:49:35', 'ingreso', 'NO C', 'efectivo', 15000.00, 1, 7, NULL),
+(21, '2025-09-01 23:51:54', 'ingreso', 'cuota', 'transferencia', 20000.00, 1, 4, 9),
+(22, '2025-09-02 14:51:03', 'ingreso', 'Prote', 'efectivo', 17000.00, 1, 7, NULL),
+(23, '2025-09-22 21:38:11', 'egreso', 'distribuidora prote', 'efectivo', 75000.00, 1, 6, NULL),
+(24, '2025-09-22 21:47:05', 'egreso', 'Luz', 'efectivo', 50000.00, 1, 6, NULL),
+(25, '2025-09-22 21:48:37', 'ingreso', 'Prote', 'efectivo', 90000.00, 1, 6, NULL);
 
 -- --------------------------------------------------------
 
 --
--- Estructura de tabla para la tabla `clases`
+-- Table structure for table `clases`
 --
 
 CREATE TABLE `clases` (
@@ -1461,11 +1522,11 @@ CREATE TABLE `clases` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
--- Volcado de datos para la tabla `clases`
+-- Dumping data for table `clases`
 --
 
 INSERT INTO `clases` (`id_clase`, `id_disciplina`, `id_dia`, `hora`, `capacidad_max`, `activa`) VALUES
-(1, 1, 1, '18:00:00', 20, 1),
+(1, 1, 1, '06:00:00', 20, 1),
 (2, 1, 2, '08:00:00', 20, 1),
 (3, 1, 3, '08:00:00', 20, 1),
 (4, 1, 4, '08:00:00', 20, 1),
@@ -1500,7 +1561,7 @@ INSERT INTO `clases` (`id_clase`, `id_disciplina`, `id_dia`, `hora`, `capacidad_
 -- --------------------------------------------------------
 
 --
--- Estructura de tabla para la tabla `clases_usuarios`
+-- Table structure for table `clases_usuarios`
 --
 
 CREATE TABLE `clases_usuarios` (
@@ -1511,21 +1572,26 @@ CREATE TABLE `clases_usuarios` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
--- Volcado de datos para la tabla `clases_usuarios`
+-- Dumping data for table `clases_usuarios`
 --
 
 INSERT INTO `clases_usuarios` (`id_clase`, `id_usuario`, `presente`, `fecha`) VALUES
 (1, 4, NULL, '2025-05-26'),
+(1, 4, NULL, '2025-09-01'),
 (2, 4, NULL, '2025-05-27'),
+(2, 4, NULL, '2025-09-02'),
+(3, 4, NULL, '2025-09-03'),
+(4, 4, NULL, '2025-09-04'),
 (5, 4, NULL, '2025-08-22'),
 (6, 4, NULL, '2025-08-23'),
 (7, 4, NULL, '2025-05-26'),
+(8, 4, NULL, '2025-09-02'),
 (10, 4, NULL, '2025-06-05');
 
 -- --------------------------------------------------------
 
 --
--- Estructura de tabla para la tabla `cuotas`
+-- Table structure for table `cuotas`
 --
 
 CREATE TABLE `cuotas` (
@@ -1540,18 +1606,19 @@ CREATE TABLE `cuotas` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
--- Volcado de datos para la tabla `cuotas`
+-- Dumping data for table `cuotas`
 --
 
 INSERT INTO `cuotas` (`id_cuota`, `id_usuario`, `id_plan`, `fecha_pago`, `fecha_vencimiento`, `estado_pago`, `creditos_total`, `creditos_disponibles`) VALUES
 (1, 4, 1, '2025-05-12', '2025-06-11', 'Paga', 8, 28),
 (6, 6, 1, '2025-08-19', '2025-09-19', 'Paga', 8, 8),
-(8, 4, 5, '2025-08-21', '2025-09-21', 'Paga', 23, 21);
+(8, 4, 5, '2025-08-21', '2025-09-21', 'Paga', 23, 21),
+(9, 4, 1, '2025-09-01', '2025-10-01', 'Paga', 8, 3);
 
 -- --------------------------------------------------------
 
 --
--- Estructura de tabla para la tabla `datos_personales`
+-- Table structure for table `datos_personales`
 --
 
 CREATE TABLE `datos_personales` (
@@ -1561,11 +1628,11 @@ CREATE TABLE `datos_personales` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
--- Volcado de datos para la tabla `datos_personales`
+-- Dumping data for table `datos_personales`
 --
 
 INSERT INTO `datos_personales` (`id_usuario`, `dni`, `celular`) VALUES
-(4, '46999888', '1133445566'),
+(4, '46999888', '11111111'),
 (6, '41991328', '2364310386'),
 (7, '41717495', '1199999999'),
 (8, '345678495', '2345687964'),
@@ -1575,7 +1642,7 @@ INSERT INTO `datos_personales` (`id_usuario`, `dni`, `celular`) VALUES
 -- --------------------------------------------------------
 
 --
--- Estructura de tabla para la tabla `dias`
+-- Table structure for table `dias`
 --
 
 CREATE TABLE `dias` (
@@ -1584,7 +1651,7 @@ CREATE TABLE `dias` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
--- Volcado de datos para la tabla `dias`
+-- Dumping data for table `dias`
 --
 
 INSERT INTO `dias` (`id_dia`, `dia`) VALUES
@@ -1598,7 +1665,7 @@ INSERT INTO `dias` (`id_dia`, `dia`) VALUES
 -- --------------------------------------------------------
 
 --
--- Estructura de tabla para la tabla `disciplinas`
+-- Table structure for table `disciplinas`
 --
 
 CREATE TABLE `disciplinas` (
@@ -1608,7 +1675,7 @@ CREATE TABLE `disciplinas` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
--- Volcado de datos para la tabla `disciplinas`
+-- Dumping data for table `disciplinas`
 --
 
 INSERT INTO `disciplinas` (`id_disciplina`, `disciplina`, `activa`) VALUES
@@ -1622,7 +1689,7 @@ INSERT INTO `disciplinas` (`id_disciplina`, `disciplina`, `activa`) VALUES
 -- --------------------------------------------------------
 
 --
--- Estructura de tabla para la tabla `ejercicios`
+-- Table structure for table `ejercicios`
 --
 
 CREATE TABLE `ejercicios` (
@@ -1633,7 +1700,7 @@ CREATE TABLE `ejercicios` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
--- Volcado de datos para la tabla `ejercicios`
+-- Dumping data for table `ejercicios`
 --
 
 INSERT INTO `ejercicios` (`id_ejercicio`, `nombre`, `link`, `activa`) VALUES
@@ -1647,7 +1714,7 @@ INSERT INTO `ejercicios` (`id_ejercicio`, `nombre`, `link`, `activa`) VALUES
 -- --------------------------------------------------------
 
 --
--- Estructura de tabla para la tabla `ejercicios_usuarios_rm`
+-- Table structure for table `ejercicios_usuarios_rm`
 --
 
 CREATE TABLE `ejercicios_usuarios_rm` (
@@ -1660,7 +1727,7 @@ CREATE TABLE `ejercicios_usuarios_rm` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
--- Volcado de datos para la tabla `ejercicios_usuarios_rm`
+-- Dumping data for table `ejercicios_usuarios_rm`
 --
 
 INSERT INTO `ejercicios_usuarios_rm` (`id_usuario`, `id_ejercicio`, `peso`, `repeticiones`, `fecha_actualizacion`, `notas`) VALUES
@@ -1669,7 +1736,7 @@ INSERT INTO `ejercicios_usuarios_rm` (`id_usuario`, `id_ejercicio`, `peso`, `rep
 -- --------------------------------------------------------
 
 --
--- Estructura de tabla para la tabla `estados`
+-- Table structure for table `estados`
 --
 
 CREATE TABLE `estados` (
@@ -1678,7 +1745,7 @@ CREATE TABLE `estados` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
--- Volcado de datos para la tabla `estados`
+-- Dumping data for table `estados`
 --
 
 INSERT INTO `estados` (`id_estado`, `estado`) VALUES
@@ -1689,7 +1756,7 @@ INSERT INTO `estados` (`id_estado`, `estado`) VALUES
 -- --------------------------------------------------------
 
 --
--- Estructura de tabla para la tabla `horas_pactadas`
+-- Table structure for table `horas_pactadas`
 --
 
 CREATE TABLE `horas_pactadas` (
@@ -1701,7 +1768,7 @@ CREATE TABLE `horas_pactadas` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
--- Volcado de datos para la tabla `horas_pactadas`
+-- Dumping data for table `horas_pactadas`
 --
 
 INSERT INTO `horas_pactadas` (`id_pactado`, `id_usuario`, `horas_pactadas`, `tarifa`, `active`) VALUES
@@ -1711,7 +1778,7 @@ INSERT INTO `horas_pactadas` (`id_pactado`, `id_usuario`, `horas_pactadas`, `tar
 -- --------------------------------------------------------
 
 --
--- Estructura de tabla para la tabla `liquidaciones_profes`
+-- Table structure for table `liquidaciones_profes`
 --
 
 CREATE TABLE `liquidaciones_profes` (
@@ -1726,7 +1793,7 @@ CREATE TABLE `liquidaciones_profes` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
--- Volcado de datos para la tabla `liquidaciones_profes`
+-- Dumping data for table `liquidaciones_profes`
 --
 
 INSERT INTO `liquidaciones_profes` (`id_liquidacion`, `id_usuario`, `periodo`, `horas_pactadas`, `horas_trabajadas`, `horas_pagadas`, `total`, `fecha_liquidacion`) VALUES
@@ -1736,7 +1803,7 @@ INSERT INTO `liquidaciones_profes` (`id_liquidacion`, `id_usuario`, `periodo`, `
 -- --------------------------------------------------------
 
 --
--- Estructura de tabla para la tabla `planes`
+-- Table structure for table `planes`
 --
 
 CREATE TABLE `planes` (
@@ -1749,7 +1816,7 @@ CREATE TABLE `planes` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
--- Volcado de datos para la tabla `planes`
+-- Dumping data for table `planes`
 --
 
 INSERT INTO `planes` (`id_plan`, `nombre`, `descripcion`, `monto`, `creditos_total`, `activa`) VALUES
@@ -1759,7 +1826,7 @@ INSERT INTO `planes` (`id_plan`, `nombre`, `descripcion`, `monto`, `creditos_tot
 -- --------------------------------------------------------
 
 --
--- Estructura de tabla para la tabla `planes_disciplinas`
+-- Table structure for table `planes_disciplinas`
 --
 
 CREATE TABLE `planes_disciplinas` (
@@ -1768,7 +1835,7 @@ CREATE TABLE `planes_disciplinas` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
--- Volcado de datos para la tabla `planes_disciplinas`
+-- Dumping data for table `planes_disciplinas`
 --
 
 INSERT INTO `planes_disciplinas` (`id_plan`, `id_disciplina`) VALUES
@@ -1780,7 +1847,7 @@ INSERT INTO `planes_disciplinas` (`id_plan`, `id_disciplina`) VALUES
 -- --------------------------------------------------------
 
 --
--- Estructura de tabla para la tabla `productos`
+-- Table structure for table `productos`
 --
 
 CREATE TABLE `productos` (
@@ -1792,17 +1859,18 @@ CREATE TABLE `productos` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
--- Volcado de datos para la tabla `productos`
+-- Dumping data for table `productos`
 --
 
 INSERT INTO `productos` (`id_producto`, `nombre`, `descripcion`, `precio`, `stock`) VALUES
-(1, 'Proteína Whey', 'Suplemento de proteína en polvo', 15000.00, 5),
-(2, 'Powerade Frutos Rojos', 'Bebida isotónica', 2000.00, 13);
+(1, 'Proteína Whey', 'Suplemento de proteína en polvo', 30000.00, 2),
+(2, 'Powerade Frutos Rojos', 'Bebida isotónica', 2000.00, 12),
+(3, 'Barrita proteica', 'barrita chocolate', 3000.00, 10);
 
 -- --------------------------------------------------------
 
 --
--- Estructura de tabla para la tabla `roles`
+-- Table structure for table `roles`
 --
 
 CREATE TABLE `roles` (
@@ -1811,7 +1879,7 @@ CREATE TABLE `roles` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
--- Volcado de datos para la tabla `roles`
+-- Dumping data for table `roles`
 --
 
 INSERT INTO `roles` (`id_rol`, `rol`) VALUES
@@ -1822,7 +1890,7 @@ INSERT INTO `roles` (`id_rol`, `rol`) VALUES
 -- --------------------------------------------------------
 
 --
--- Estructura de tabla para la tabla `rutina`
+-- Table structure for table `rutina`
 --
 
 CREATE TABLE `rutina` (
@@ -1833,7 +1901,7 @@ CREATE TABLE `rutina` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
--- Volcado de datos para la tabla `rutina`
+-- Dumping data for table `rutina`
 --
 
 INSERT INTO `rutina` (`id_rutina`, `id_usuario`, `activa`, `nombre`) VALUES
@@ -1842,7 +1910,7 @@ INSERT INTO `rutina` (`id_rutina`, `id_usuario`, `activa`, `nombre`) VALUES
 -- --------------------------------------------------------
 
 --
--- Estructura de tabla para la tabla `rutina_ejercicios`
+-- Table structure for table `rutina_ejercicios`
 --
 
 CREATE TABLE `rutina_ejercicios` (
@@ -1855,7 +1923,7 @@ CREATE TABLE `rutina_ejercicios` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
--- Volcado de datos para la tabla `rutina_ejercicios`
+-- Dumping data for table `rutina_ejercicios`
 --
 
 INSERT INTO `rutina_ejercicios` (`id_rutina`, `id_ejercicio`, `dia`, `orden`, `rondas`, `repeticiones`) VALUES
@@ -1865,7 +1933,7 @@ INSERT INTO `rutina_ejercicios` (`id_rutina`, `id_ejercicio`, `dia`, `orden`, `r
 -- --------------------------------------------------------
 
 --
--- Estructura de tabla para la tabla `usuarios`
+-- Table structure for table `usuarios`
 --
 
 CREATE TABLE `usuarios` (
@@ -1878,7 +1946,7 @@ CREATE TABLE `usuarios` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
--- Volcado de datos para la tabla `usuarios`
+-- Dumping data for table `usuarios`
 --
 
 INSERT INTO `usuarios` (`id_usuario`, `email`, `password`, `id_rol`, `nombre`, `id_estado`) VALUES
@@ -1890,18 +1958,18 @@ INSERT INTO `usuarios` (`id_usuario`, `email`, `password`, `id_rol`, `nombre`, `
 (10, 'agusf@gmail.com', '$2b$10$puRGvIfbzdiNaYnVfI9BsuqS43MkyIa5XFH9b6IEduRjgupnFID.G', 3, 'Agustin Fernandez', 2);
 
 --
--- Índices para tablas volcadas
+-- Indexes for dumped tables
 --
 
 --
--- Indices de la tabla `asistencia_profes`
+-- Indexes for table `asistencia_profes`
 --
 ALTER TABLE `asistencia_profes`
   ADD PRIMARY KEY (`id_asistencia`),
   ADD KEY `id_usuario` (`id_usuario`);
 
 --
--- Indices de la tabla `caja_detalle`
+-- Indexes for table `caja_detalle`
 --
 ALTER TABLE `caja_detalle`
   ADD PRIMARY KEY (`id_detalle`),
@@ -1909,7 +1977,7 @@ ALTER TABLE `caja_detalle`
   ADD KEY `id_producto` (`id_producto`);
 
 --
--- Indices de la tabla `caja_movimientos`
+-- Indexes for table `caja_movimientos`
 --
 ALTER TABLE `caja_movimientos`
   ADD PRIMARY KEY (`id_movimiento`),
@@ -1917,7 +1985,7 @@ ALTER TABLE `caja_movimientos`
   ADD KEY `id_cuota` (`id_cuota`);
 
 --
--- Indices de la tabla `clases`
+-- Indexes for table `clases`
 --
 ALTER TABLE `clases`
   ADD PRIMARY KEY (`id_clase`),
@@ -1925,14 +1993,14 @@ ALTER TABLE `clases`
   ADD KEY `id_dia` (`id_dia`);
 
 --
--- Indices de la tabla `clases_usuarios`
+-- Indexes for table `clases_usuarios`
 --
 ALTER TABLE `clases_usuarios`
   ADD PRIMARY KEY (`id_clase`,`id_usuario`,`fecha`),
   ADD KEY `id_usuario` (`id_usuario`);
 
 --
--- Indices de la tabla `cuotas`
+-- Indexes for table `cuotas`
 --
 ALTER TABLE `cuotas`
   ADD PRIMARY KEY (`id_cuota`),
@@ -1940,97 +2008,97 @@ ALTER TABLE `cuotas`
   ADD KEY `id_plan` (`id_plan`);
 
 --
--- Indices de la tabla `datos_personales`
+-- Indexes for table `datos_personales`
 --
 ALTER TABLE `datos_personales`
   ADD PRIMARY KEY (`id_usuario`);
 
 --
--- Indices de la tabla `dias`
+-- Indexes for table `dias`
 --
 ALTER TABLE `dias`
   ADD PRIMARY KEY (`id_dia`);
 
 --
--- Indices de la tabla `disciplinas`
+-- Indexes for table `disciplinas`
 --
 ALTER TABLE `disciplinas`
   ADD PRIMARY KEY (`id_disciplina`);
 
 --
--- Indices de la tabla `ejercicios`
+-- Indexes for table `ejercicios`
 --
 ALTER TABLE `ejercicios`
   ADD PRIMARY KEY (`id_ejercicio`);
 
 --
--- Indices de la tabla `ejercicios_usuarios_rm`
+-- Indexes for table `ejercicios_usuarios_rm`
 --
 ALTER TABLE `ejercicios_usuarios_rm`
   ADD PRIMARY KEY (`id_usuario`,`id_ejercicio`,`repeticiones`),
   ADD KEY `id_ejercicio` (`id_ejercicio`);
 
 --
--- Indices de la tabla `estados`
+-- Indexes for table `estados`
 --
 ALTER TABLE `estados`
   ADD PRIMARY KEY (`id_estado`);
 
 --
--- Indices de la tabla `horas_pactadas`
+-- Indexes for table `horas_pactadas`
 --
 ALTER TABLE `horas_pactadas`
   ADD PRIMARY KEY (`id_pactado`),
   ADD KEY `id_usuario` (`id_usuario`);
 
 --
--- Indices de la tabla `liquidaciones_profes`
+-- Indexes for table `liquidaciones_profes`
 --
 ALTER TABLE `liquidaciones_profes`
   ADD PRIMARY KEY (`id_liquidacion`),
   ADD KEY `id_usuario` (`id_usuario`);
 
 --
--- Indices de la tabla `planes`
+-- Indexes for table `planes`
 --
 ALTER TABLE `planes`
   ADD PRIMARY KEY (`id_plan`);
 
 --
--- Indices de la tabla `planes_disciplinas`
+-- Indexes for table `planes_disciplinas`
 --
 ALTER TABLE `planes_disciplinas`
   ADD PRIMARY KEY (`id_plan`,`id_disciplina`),
   ADD KEY `id_disciplina` (`id_disciplina`);
 
 --
--- Indices de la tabla `productos`
+-- Indexes for table `productos`
 --
 ALTER TABLE `productos`
   ADD PRIMARY KEY (`id_producto`);
 
 --
--- Indices de la tabla `roles`
+-- Indexes for table `roles`
 --
 ALTER TABLE `roles`
   ADD PRIMARY KEY (`id_rol`);
 
 --
--- Indices de la tabla `rutina`
+-- Indexes for table `rutina`
 --
 ALTER TABLE `rutina`
   ADD PRIMARY KEY (`id_rutina`),
   ADD KEY `id_usuario` (`id_usuario`);
 
 --
--- Indices de la tabla `rutina_ejercicios`
+-- Indexes for table `rutina_ejercicios`
 --
 ALTER TABLE `rutina_ejercicios`
   ADD PRIMARY KEY (`id_rutina`,`id_ejercicio`,`dia`),
   ADD KEY `id_ejercicio` (`id_ejercicio`);
 
 --
--- Indices de la tabla `usuarios`
+-- Indexes for table `usuarios`
 --
 ALTER TABLE `usuarios`
   ADD PRIMARY KEY (`id_usuario`),
@@ -2038,197 +2106,197 @@ ALTER TABLE `usuarios`
   ADD KEY `fk_usuario_estado` (`id_estado`);
 
 --
--- AUTO_INCREMENT de las tablas volcadas
+-- AUTO_INCREMENT for dumped tables
 --
 
 --
--- AUTO_INCREMENT de la tabla `asistencia_profes`
+-- AUTO_INCREMENT for table `asistencia_profes`
 --
 ALTER TABLE `asistencia_profes`
-  MODIFY `id_asistencia` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=5;
+  MODIFY `id_asistencia` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=10;
 
 --
--- AUTO_INCREMENT de la tabla `caja_detalle`
+-- AUTO_INCREMENT for table `caja_detalle`
 --
 ALTER TABLE `caja_detalle`
-  MODIFY `id_detalle` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=24;
+  MODIFY `id_detalle` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=29;
 
 --
--- AUTO_INCREMENT de la tabla `caja_movimientos`
+-- AUTO_INCREMENT for table `caja_movimientos`
 --
 ALTER TABLE `caja_movimientos`
-  MODIFY `id_movimiento` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=20;
+  MODIFY `id_movimiento` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=26;
 
 --
--- AUTO_INCREMENT de la tabla `clases`
+-- AUTO_INCREMENT for table `clases`
 --
 ALTER TABLE `clases`
   MODIFY `id_clase` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=32;
 
 --
--- AUTO_INCREMENT de la tabla `cuotas`
+-- AUTO_INCREMENT for table `cuotas`
 --
 ALTER TABLE `cuotas`
-  MODIFY `id_cuota` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=9;
+  MODIFY `id_cuota` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=10;
 
 --
--- AUTO_INCREMENT de la tabla `dias`
+-- AUTO_INCREMENT for table `dias`
 --
 ALTER TABLE `dias`
   MODIFY `id_dia` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=7;
 
 --
--- AUTO_INCREMENT de la tabla `disciplinas`
+-- AUTO_INCREMENT for table `disciplinas`
 --
 ALTER TABLE `disciplinas`
   MODIFY `id_disciplina` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=7;
 
 --
--- AUTO_INCREMENT de la tabla `ejercicios`
+-- AUTO_INCREMENT for table `ejercicios`
 --
 ALTER TABLE `ejercicios`
   MODIFY `id_ejercicio` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=7;
 
 --
--- AUTO_INCREMENT de la tabla `estados`
+-- AUTO_INCREMENT for table `estados`
 --
 ALTER TABLE `estados`
   MODIFY `id_estado` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
 
 --
--- AUTO_INCREMENT de la tabla `horas_pactadas`
+-- AUTO_INCREMENT for table `horas_pactadas`
 --
 ALTER TABLE `horas_pactadas`
   MODIFY `id_pactado` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
 
 --
--- AUTO_INCREMENT de la tabla `liquidaciones_profes`
+-- AUTO_INCREMENT for table `liquidaciones_profes`
 --
 ALTER TABLE `liquidaciones_profes`
   MODIFY `id_liquidacion` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
 
 --
--- AUTO_INCREMENT de la tabla `planes`
+-- AUTO_INCREMENT for table `planes`
 --
 ALTER TABLE `planes`
   MODIFY `id_plan` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=6;
 
 --
--- AUTO_INCREMENT de la tabla `productos`
+-- AUTO_INCREMENT for table `productos`
 --
 ALTER TABLE `productos`
-  MODIFY `id_producto` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
+  MODIFY `id_producto` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=6;
 
 --
--- AUTO_INCREMENT de la tabla `roles`
+-- AUTO_INCREMENT for table `roles`
 --
 ALTER TABLE `roles`
   MODIFY `id_rol` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
 
 --
--- AUTO_INCREMENT de la tabla `rutina`
+-- AUTO_INCREMENT for table `rutina`
 --
 ALTER TABLE `rutina`
   MODIFY `id_rutina` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
 
 --
--- AUTO_INCREMENT de la tabla `usuarios`
+-- AUTO_INCREMENT for table `usuarios`
 --
 ALTER TABLE `usuarios`
   MODIFY `id_usuario` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=11;
 
 --
--- Restricciones para tablas volcadas
+-- Constraints for dumped tables
 --
 
 --
--- Filtros para la tabla `asistencia_profes`
+-- Constraints for table `asistencia_profes`
 --
 ALTER TABLE `asistencia_profes`
   ADD CONSTRAINT `asistencia_profes_ibfk_1` FOREIGN KEY (`id_usuario`) REFERENCES `usuarios` (`id_usuario`);
 
 --
--- Filtros para la tabla `caja_detalle`
+-- Constraints for table `caja_detalle`
 --
 ALTER TABLE `caja_detalle`
   ADD CONSTRAINT `caja_detalle_ibfk_1` FOREIGN KEY (`id_movimiento`) REFERENCES `caja_movimientos` (`id_movimiento`),
   ADD CONSTRAINT `caja_detalle_ibfk_2` FOREIGN KEY (`id_producto`) REFERENCES `productos` (`id_producto`);
 
 --
--- Filtros para la tabla `caja_movimientos`
+-- Constraints for table `caja_movimientos`
 --
 ALTER TABLE `caja_movimientos`
   ADD CONSTRAINT `caja_movimientos_ibfk_1` FOREIGN KEY (`id_usuario`) REFERENCES `usuarios` (`id_usuario`),
   ADD CONSTRAINT `caja_movimientos_ibfk_2` FOREIGN KEY (`id_cuota`) REFERENCES `cuotas` (`id_cuota`);
 
 --
--- Filtros para la tabla `clases`
+-- Constraints for table `clases`
 --
 ALTER TABLE `clases`
   ADD CONSTRAINT `clases_ibfk_1` FOREIGN KEY (`id_disciplina`) REFERENCES `disciplinas` (`id_disciplina`),
   ADD CONSTRAINT `clases_ibfk_2` FOREIGN KEY (`id_dia`) REFERENCES `dias` (`id_dia`);
 
 --
--- Filtros para la tabla `clases_usuarios`
+-- Constraints for table `clases_usuarios`
 --
 ALTER TABLE `clases_usuarios`
   ADD CONSTRAINT `clases_usuarios_ibfk_1` FOREIGN KEY (`id_clase`) REFERENCES `clases` (`id_clase`),
   ADD CONSTRAINT `clases_usuarios_ibfk_2` FOREIGN KEY (`id_usuario`) REFERENCES `usuarios` (`id_usuario`);
 
 --
--- Filtros para la tabla `cuotas`
+-- Constraints for table `cuotas`
 --
 ALTER TABLE `cuotas`
   ADD CONSTRAINT `cuotas_ibfk_1` FOREIGN KEY (`id_usuario`) REFERENCES `usuarios` (`id_usuario`),
   ADD CONSTRAINT `cuotas_ibfk_2` FOREIGN KEY (`id_plan`) REFERENCES `planes` (`id_plan`);
 
 --
--- Filtros para la tabla `datos_personales`
+-- Constraints for table `datos_personales`
 --
 ALTER TABLE `datos_personales`
   ADD CONSTRAINT `datos_personales_ibfk_1` FOREIGN KEY (`id_usuario`) REFERENCES `usuarios` (`id_usuario`);
 
 --
--- Filtros para la tabla `ejercicios_usuarios_rm`
+-- Constraints for table `ejercicios_usuarios_rm`
 --
 ALTER TABLE `ejercicios_usuarios_rm`
   ADD CONSTRAINT `ejercicios_usuarios_rm_ibfk_1` FOREIGN KEY (`id_usuario`) REFERENCES `usuarios` (`id_usuario`),
   ADD CONSTRAINT `ejercicios_usuarios_rm_ibfk_2` FOREIGN KEY (`id_ejercicio`) REFERENCES `ejercicios` (`id_ejercicio`);
 
 --
--- Filtros para la tabla `horas_pactadas`
+-- Constraints for table `horas_pactadas`
 --
 ALTER TABLE `horas_pactadas`
   ADD CONSTRAINT `horas_pactadas_ibfk_1` FOREIGN KEY (`id_usuario`) REFERENCES `usuarios` (`id_usuario`);
 
 --
--- Filtros para la tabla `liquidaciones_profes`
+-- Constraints for table `liquidaciones_profes`
 --
 ALTER TABLE `liquidaciones_profes`
   ADD CONSTRAINT `liquidaciones_profes_ibfk_1` FOREIGN KEY (`id_usuario`) REFERENCES `usuarios` (`id_usuario`);
 
 --
--- Filtros para la tabla `planes_disciplinas`
+-- Constraints for table `planes_disciplinas`
 --
 ALTER TABLE `planes_disciplinas`
   ADD CONSTRAINT `planes_disciplinas_ibfk_1` FOREIGN KEY (`id_plan`) REFERENCES `planes` (`id_plan`),
   ADD CONSTRAINT `planes_disciplinas_ibfk_2` FOREIGN KEY (`id_disciplina`) REFERENCES `disciplinas` (`id_disciplina`);
 
 --
--- Filtros para la tabla `rutina`
+-- Constraints for table `rutina`
 --
 ALTER TABLE `rutina`
   ADD CONSTRAINT `rutina_ibfk_1` FOREIGN KEY (`id_usuario`) REFERENCES `usuarios` (`id_usuario`);
 
 --
--- Filtros para la tabla `rutina_ejercicios`
+-- Constraints for table `rutina_ejercicios`
 --
 ALTER TABLE `rutina_ejercicios`
   ADD CONSTRAINT `rutina_ejercicios_ibfk_1` FOREIGN KEY (`id_rutina`) REFERENCES `rutina` (`id_rutina`) ON DELETE CASCADE,
   ADD CONSTRAINT `rutina_ejercicios_ibfk_2` FOREIGN KEY (`id_ejercicio`) REFERENCES `ejercicios` (`id_ejercicio`) ON DELETE CASCADE;
 
 --
--- Filtros para la tabla `usuarios`
+-- Constraints for table `usuarios`
 --
 ALTER TABLE `usuarios`
   ADD CONSTRAINT `fk_usuario_estado` FOREIGN KEY (`id_estado`) REFERENCES `estados` (`id_estado`),
