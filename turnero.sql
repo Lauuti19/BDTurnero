@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: db
--- Generation Time: Sep 22, 2025 at 10:31 PM
+-- Generation Time: Sep 28, 2025 at 08:19 PM
 -- Server version: 9.4.0
 -- PHP Version: 8.2.27
 
@@ -523,6 +523,7 @@ CREATE DEFINER=`root`@`%` PROCEDURE `GetPreLiquidacionProfesor` (IN `p_id_usuari
     DECLARE v_tarifa DECIMAL(10,2);
     DECLARE v_horas_trabajadas DECIMAL(10,2);
     DECLARE v_total DECIMAL(10,2);
+    DECLARE v_liquidado TINYINT DEFAULT 0;
 
     -- Horas pactadas y tarifa
     SELECT horas_pactadas, tarifa
@@ -540,18 +541,34 @@ CREATE DEFINER=`root`@`%` PROCEDURE `GetPreLiquidacionProfesor` (IN `p_id_usuari
     -- Calcular total
     SET v_total = v_horas_trabajadas * v_tarifa;
 
-    -- Devolver resultado sin insertar
+    -- Verificar si ya existe liquidación
+    SELECT COUNT(*) > 0
+    INTO v_liquidado
+    FROM liquidaciones_profes
+    WHERE id_usuario = p_id_usuario
+      AND periodo = p_periodo;
+
+    -- Devolver resultado
     SELECT 
         p_id_usuario AS id_usuario,
         p_periodo   AS periodo,
         v_horas_pactadas AS horas_pactadas,
         v_tarifa    AS tarifa,
         v_horas_trabajadas AS horas_trabajadas,
-        v_total     AS total;
+        v_total     AS total,
+        v_liquidado AS liquidado;
 END$$
 
 CREATE DEFINER=`root`@`%` PROCEDURE `GetProducts` ()   BEGIN
     SELECT * FROM productos;
+END$$
+
+CREATE DEFINER=`root`@`%` PROCEDURE `GetProfesAndAdmins` ()   BEGIN
+    SELECT 
+        u.id_usuario,
+        u.nombre
+    FROM usuarios u
+    WHERE u.id_rol IN (1,2);
 END$$
 
 CREATE DEFINER=`root`@`localhost` PROCEDURE `GetRMsUsuario` (IN `p_id_usuario` INT)   BEGIN
@@ -1026,7 +1043,9 @@ END$$
 CREATE DEFINER=`root`@`%` PROCEDURE `RegistrarCheckOut` (IN `p_id_usuario` INT, IN `p_fecha` DATE, IN `p_hora` TIME)   BEGIN
     DECLARE v_id_asistencia INT;
     DECLARE v_check_in TIME;
+    DECLARE v_duracion INT;
 
+    -- Buscar check-in abierto del usuario
     SELECT id_asistencia, check_in
     INTO v_id_asistencia, v_check_in
     FROM asistencia_profes
@@ -1036,14 +1055,30 @@ CREATE DEFINER=`root`@`%` PROCEDURE `RegistrarCheckOut` (IN `p_id_usuario` INT, 
     ORDER BY check_in DESC
     LIMIT 1;
 
+    -- Validar que exista
     IF v_id_asistencia IS NULL THEN
         SIGNAL SQLSTATE '45000'
         SET MESSAGE_TEXT = 'No existe un check-in pendiente para cerrar.';
     END IF;
 
+    -- Calcular duración en minutos
+    SET v_duracion = TIMESTAMPDIFF(MINUTE, v_check_in, p_hora);
+
+    -- Validar duración
+    IF v_duracion <= 0 THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'La hora de check-out no puede ser anterior o igual al check-in.';
+    END IF;
+
+    IF v_duracion < 60 THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Debe registrarse al menos 1 hora de trabajo.';
+    END IF;
+
+    -- Guardar redondeando al entero más cercano
     UPDATE asistencia_profes
     SET check_out = p_hora,
-        horas_total = TIMESTAMPDIFF(MINUTE, v_check_in, p_hora) / 60
+        horas_total = ROUND(v_duracion / 60)
     WHERE id_asistencia = v_id_asistencia;
 END$$
 
@@ -1277,11 +1312,10 @@ INSERT INTO `asistencia_profes` (`id_asistencia`, `id_usuario`, `fecha`, `check_
 (2, 6, '2025-08-25', '08:00:00', '12:00:00', 4.00),
 (3, 9, '2025-08-25', '13:00:00', '21:00:00', 8.00),
 (4, 9, '2025-08-26', '13:00:00', '21:00:00', 8.00),
-(5, 6, '2025-09-09', '21:50:45', NULL, NULL),
-(6, 6, '2025-09-22', '17:42:05', '17:58:55', 0.27),
-(7, 6, '2025-09-22', '17:59:00', '17:59:02', 0.00),
-(8, 6, '2025-09-22', '18:05:55', '18:06:55', 0.02),
-(9, 6, '2025-09-22', '18:07:09', '20:07:14', 2.00);
+(9, 6, '2025-09-22', '18:07:09', '20:07:14', 2.00),
+(10, 6, '2025-09-23', '20:00:00', '22:00:00', 2.00),
+(12, 6, '2025-09-28', '17:02:17', '18:02:26', 1.00),
+(13, 6, '2025-09-28', '17:04:14', '20:04:23', 3.00);
 
 -- --------------------------------------------------------
 
@@ -1328,7 +1362,8 @@ INSERT INTO `caja_detalle` (`id_detalle`, `id_movimiento`, `id_producto`, `canti
 (25, 22, 1, 1, 15000.00),
 (26, 22, 2, 1, 2000.00),
 (27, 23, 1, 5, 15000.00),
-(28, 25, 1, 6, 15000.00);
+(28, 25, 1, 6, 15000.00),
+(29, 26, 3, 10, 3000.00);
 
 --
 -- Triggers `caja_detalle`
@@ -1504,7 +1539,8 @@ INSERT INTO `caja_movimientos` (`id_movimiento`, `fecha`, `tipo`, `concepto`, `m
 (22, '2025-09-02 14:51:03', 'ingreso', 'Prote', 'efectivo', 17000.00, 1, 7, NULL),
 (23, '2025-09-22 21:38:11', 'egreso', 'distribuidora prote', 'efectivo', 75000.00, 1, 6, NULL),
 (24, '2025-09-22 21:47:05', 'egreso', 'Luz', 'efectivo', 50000.00, 1, 6, NULL),
-(25, '2025-09-22 21:48:37', 'ingreso', 'Prote', 'efectivo', 90000.00, 1, 6, NULL);
+(25, '2025-09-22 21:48:37', 'ingreso', 'Prote', 'efectivo', 90000.00, 1, 6, NULL),
+(26, '2025-09-23 00:08:17', 'egreso', 'distribuidor', 'efectivo', 30000.00, 1, 6, NULL);
 
 -- --------------------------------------------------------
 
@@ -1772,8 +1808,9 @@ CREATE TABLE `horas_pactadas` (
 --
 
 INSERT INTO `horas_pactadas` (`id_pactado`, `id_usuario`, `horas_pactadas`, `tarifa`, `active`) VALUES
-(1, 6, 45, 7800.00, 1),
-(2, 9, 40, 6500.00, 1);
+(1, 6, 50, 8000.00, 1),
+(2, 9, 40, 6500.00, 1),
+(3, 7, 8, 6000.00, 1);
 
 -- --------------------------------------------------------
 
@@ -1864,8 +1901,9 @@ CREATE TABLE `productos` (
 
 INSERT INTO `productos` (`id_producto`, `nombre`, `descripcion`, `precio`, `stock`) VALUES
 (1, 'Proteína Whey', 'Suplemento de proteína en polvo', 30000.00, 2),
-(2, 'Powerade Frutos Rojos', 'Bebida isotónica', 2000.00, 12),
-(3, 'Barrita proteica', 'barrita chocolate', 3000.00, 10);
+(2, 'Powerade Frutos Rojos', 'Bebida isotónica', 2500.00, 12),
+(3, 'Barrita proteica', 'barrita chocolate', 3000.00, 20),
+(6, 'Calleras', 'goodgrip', 30000.00, 10);
 
 -- --------------------------------------------------------
 
@@ -2113,19 +2151,19 @@ ALTER TABLE `usuarios`
 -- AUTO_INCREMENT for table `asistencia_profes`
 --
 ALTER TABLE `asistencia_profes`
-  MODIFY `id_asistencia` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=10;
+  MODIFY `id_asistencia` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=14;
 
 --
 -- AUTO_INCREMENT for table `caja_detalle`
 --
 ALTER TABLE `caja_detalle`
-  MODIFY `id_detalle` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=29;
+  MODIFY `id_detalle` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=30;
 
 --
 -- AUTO_INCREMENT for table `caja_movimientos`
 --
 ALTER TABLE `caja_movimientos`
-  MODIFY `id_movimiento` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=26;
+  MODIFY `id_movimiento` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=27;
 
 --
 -- AUTO_INCREMENT for table `clases`
@@ -2167,7 +2205,7 @@ ALTER TABLE `estados`
 -- AUTO_INCREMENT for table `horas_pactadas`
 --
 ALTER TABLE `horas_pactadas`
-  MODIFY `id_pactado` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
+  MODIFY `id_pactado` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
 
 --
 -- AUTO_INCREMENT for table `liquidaciones_profes`
@@ -2185,7 +2223,7 @@ ALTER TABLE `planes`
 -- AUTO_INCREMENT for table `productos`
 --
 ALTER TABLE `productos`
-  MODIFY `id_producto` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=6;
+  MODIFY `id_producto` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=7;
 
 --
 -- AUTO_INCREMENT for table `roles`
